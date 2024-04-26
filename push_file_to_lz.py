@@ -36,7 +36,7 @@ def __get_access_token(app_id,client_secret,directory_id):
     token_response = requests.post(token_url,data=token_data,headers=token_headers)
     token_response_dict = json.loads(token_response.text)
 
-    print(token_response.text)
+    # print(token_response.text)
 
     token = token_response_dict.get("access_token")
 
@@ -45,7 +45,7 @@ def __get_access_token(app_id,client_secret,directory_id):
       print(str(token_response_dict))
       raise Exception("Error in getting in access token")
     else:
-      print("Token is:" + token)
+    #   print("Token is:" + token)
       return token
 
 

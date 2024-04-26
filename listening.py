@@ -54,6 +54,10 @@ def listening(mongodb_params, lz_params):
             # print(f"data_type: {data_type}")
             if any(isinstance(first_item, t) for t in TYPES_TO_CONVERT_TO_STR):
                 df[key] = df[key].apply(to_string)
+            # fix of the "Date" data type from MongoDB. Now it will become "datetime2" in Fabric
+            if df[key].dtype == "datetime64[ns]":
+                print("trying to convert datetime column...")
+                df[key] = df[key].astype("datetime64[ms]")
             # remove spaces in key/column name
             if " " in key:
                 df.rename(columns={key: key.replace(" ", "_")}, inplace=True)

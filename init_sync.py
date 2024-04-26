@@ -53,7 +53,10 @@ def init_sync(mongodb_params, lz_params):
             if key in columns_to_convert_to_str:
                 batch_df[key] = batch_df[key].apply(to_string)
                 # print(f"data_type afterwards: {type(batch_df[key][0])}")
-            
+            # fix of the "Date" data type from MongoDB. Now it will become "datetime2" in Fabric
+            if batch_df[key].dtype == "datetime64[ns]":
+                print("trying to convert datetime column...")
+                batch_df[key] = batch_df[key].astype("datetime64[ms]")
             # remove spaces in key/column name
             if " " in key:
                 batch_df.rename(columns={key: key.replace(" ", "_")}, inplace=True)

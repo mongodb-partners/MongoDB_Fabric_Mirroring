@@ -6,7 +6,7 @@ TYPES_TO_CONVERT_TO_STR = [
     bson.objectid.ObjectId, 
     dict, 
     list, 
-    pd.Timestamp
+    # pd.Timestamp
     ]
 
 DATA_FILES_PATH = "data_files"
