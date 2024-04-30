@@ -24,3 +24,9 @@ CHANGE_STREAM_OPERATION_MAP = {
     "update": 1,
     "delete": 2,
     }
+
+CHANGE_STREAM_OPERATION_MAP_WHEN_INIT = {
+    "insert": 4, 
+    "update": 1,
+    "delete": 2,
+    }

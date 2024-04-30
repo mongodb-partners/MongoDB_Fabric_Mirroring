@@ -2,7 +2,9 @@ import os
 from dotenv import load_dotenv
 import requests
 import json
+import logging
 
+logger = logging.getLogger(__name__)
 
 def push_file_to_lz(
     filepath: str,
@@ -12,6 +14,7 @@ def push_file_to_lz(
     lz_secret: str,
     lz_tenant_id: str,
 ):
+    logger.debug(f"pushing file to lz. table_name={table_name}, filepath={filepath}")
     access_token = __get_access_token(lz_app_id, lz_secret, lz_tenant_id)
     __patch_file(access_token, filepath, lz_url, table_name)
     # TODO: identify if any other parquet files in the dir, and remove them, leaving only the last one we just pushed
