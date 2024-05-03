@@ -17,18 +17,18 @@ from push_file_to_lz import push_file_to_lz
 from flags import get_init_flag
 
 
-MAX_ROWS = 1
+# MAX_ROWS = 1
 TIME_THRESHOLD_IN_SEC = 600
 
-def listening(mongodb_params, lz_params):
-    logger = logging.getLogger(f"{__name__}[{mongodb_params["collection"]}]")
+def listening(collection_name: str):
+    logger = logging.getLogger(f"{__name__}[{collection_name}]")
     # logger.debug(f"conn_str={mongodb_params["conn_str"]}")
-    logger.debug(f"db_name={mongodb_params["db_name"]}")
-    logger.debug(f"collection={mongodb_params["collection"]}")
+    logger.debug(f"db_name={os.getenv("MONGO_DB_NAME")}")
+    logger.debug(f"collection={collection_name}")
     post_init_flush_done = False
-    client = pymongo.MongoClient(mongodb_params["conn_str"])
-    db = client[mongodb_params["db_name"]]
-    collection = db[mongodb_params["collection"]]
+    client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
+    db = client[os.getenv("MONGO_DB_NAME")]
+    collection = db[collection_name]
     cursor = collection.watch(full_document='updateLookup')
     
     accumulative_df: pd.DataFrame = None
@@ -36,10 +36,10 @@ def listening(mongodb_params, lz_params):
     
     logger.info("start listening to change stream...")
     for change in cursor:
-        init_flag = get_init_flag(mongodb_params["collection"])
+        init_flag = get_init_flag(collection_name)
         # do post init flush if this is the first iteration after init is done
         if not init_flag and not post_init_flush_done:
-            __post_init_flush(mongodb_params["collection"], lz_params, logger)
+            __post_init_flush(collection_name, logger)
             post_init_flush_done = True
         if accumulative_df is None:
             last_sync_time: float = time.time()
@@ -56,7 +56,7 @@ def listening(mongodb_params, lz_params):
             doc: dict = change["fullDocument"]
         df = pd.DataFrame([doc])
         if init_flag:
-            logger.debug(f"collection {mongodb_params["collection"]} still initializing, use UPSERT instead of INSERT")
+            logger.debug(f"collection {collection_name} still initializing, use UPSERT instead of INSERT")
             row_marker_value = CHANGE_STREAM_OPERATION_MAP_WHEN_INIT[operationType]
         else:
             row_marker_value = CHANGE_STREAM_OPERATION_MAP[operationType]
@@ -102,22 +102,22 @@ def listening(mongodb_params, lz_params):
         # But, if the collection is initializing, write parquet file with a
         # prefix, and do not push it to LZ
         if (accumulative_df is not None
-                and (accumulative_df.shape[0] >= MAX_ROWS
+                and (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE"))
                     or time.time() - last_sync_time >= TIME_THRESHOLD_IN_SEC
                     )
             ):
             prefix = ""
             if init_flag:
                 prefix=TEMP_PREFIX_DURING_INIT
-            parquet_full_path_filename = get_parquet_full_path_filename(mongodb_params["collection"], prefix=prefix)
+            parquet_full_path_filename = get_parquet_full_path_filename(collection_name, prefix=prefix)
             logger.debug(f"filename={parquet_full_path_filename}")
             accumulative_df.to_parquet(parquet_full_path_filename)
             accumulative_df = None
             if not init_flag:
-                push_file_to_lz(parquet_full_path_filename, lz_params["url"], mongodb_params["collection"], lz_params["app_id"], lz_params["secret"], lz_params["tenant_id"])
+                push_file_to_lz(parquet_full_path_filename, collection_name)
 
 
-def __post_init_flush(table_name: str, lz_params, logger):
+def __post_init_flush(table_name: str, logger):
     if not logger:
         logger = logging.getLogger(f"{__name__}[{table_name}]")
     logger.debug("entering __post_init_flush()")
@@ -138,5 +138,5 @@ def __post_init_flush(table_name: str, lz_params, logger):
         logger.debug(f"old name: {temp_parquet_full_path}")
         logger.debug(f"new name: {new_parquet_full_path}")
         os.rename(temp_parquet_full_path, new_parquet_full_path)
-        push_file_to_lz(new_parquet_full_path, lz_params["url"], table_name, lz_params["app_id"], lz_params["secret"], lz_params["tenant_id"])
+        push_file_to_lz(new_parquet_full_path, table_name)
 

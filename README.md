@@ -29,4 +29,5 @@ Following these steps to create a Generic Mirror L0 Landing Zone:
 1. send the POST request to create the Landing Zone
 
 ## How To Use
-The `run_template.py` file contains an example of how you can run this tool. Make sure to provide all required parameters.
+1. Make sure all environment variables are set (refer to `.env_example`)
+1. Start by simply run `python mongodb_generic_mirroring.py`

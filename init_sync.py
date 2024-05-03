@@ -11,24 +11,23 @@ from push_file_to_lz import push_file_to_lz
 from flags import set_init_flag, clear_init_flag
 
 
-def init_sync(mongodb_params, lz_params):
-    logger = logging.getLogger(f"{__name__}[{mongodb_params["collection"]}]")
-    set_init_flag(mongodb_params["collection"])
-    # logger.debug(f"conn_str={mongodb_params["conn_str"]}")
-    logger.debug(f"db_name={mongodb_params["db_name"]}")
-    logger.debug(f"collection={mongodb_params["collection"]}")
+def init_sync(collection_name: str):
+    logger = logging.getLogger(f"{__name__}[{collection_name}]")
+    set_init_flag(collection_name)
+    logger.debug(f"db_name={os.getenv("MONGO_DB_NAME")}")
+    logger.debug(f"collection={collection_name}")
     # for test only
-    # logger.debug(f"sleep(60) begin")
-    # time.sleep(60)
-    # logger.debug(f"sleep(60) ends")
+    logger.debug(f"sleep(60) begin")
+    time.sleep(60)
+    logger.debug(f"sleep(60) ends")
     
-    client = pymongo.MongoClient(mongodb_params["conn_str"])
-    db = client[mongodb_params["db_name"]]
-    collection = db[mongodb_params["collection"]]
+    client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
+    db = client[os.getenv("MONGO_DB_NAME")]
+    collection = db[collection_name]
     
     count = collection.estimated_document_count()
     
-    batch_size = MONGODB_READING_BATCH_SIZE
+    batch_size = int(os.getenv("INIT_LOAD_BATCH_SIZE"))
     
     columns_to_convert_to_str = []
     
@@ -78,13 +77,13 @@ def init_sync(mongodb_params, lz_params):
 
         # logger.debug(batch_df.info())
         logger.debug("creating parquet file...")
-        parquet_full_path_filename = get_parquet_full_path_filename(mongodb_params["collection"])
+        parquet_full_path_filename = get_parquet_full_path_filename(collection_name)
         batch_df.to_parquet(parquet_full_path_filename, index=False)
         if index == 0:
-            metadata_json_path = __copy_metadata_json(mongodb_params["collection"])
-            push_file_to_lz(metadata_json_path, lz_params["url"], mongodb_params["collection"], lz_params["app_id"], lz_params["secret"], lz_params["tenant_id"])
-        push_file_to_lz(parquet_full_path_filename, lz_params["url"], mongodb_params["collection"], lz_params["app_id"], lz_params["secret"], lz_params["tenant_id"])
-    clear_init_flag(mongodb_params["collection"])
+            metadata_json_path = __copy_metadata_json(collection_name)
+            push_file_to_lz(metadata_json_path, collection_name)
+        push_file_to_lz(parquet_full_path_filename, collection_name)
+    clear_init_flag(collection_name)
     
 
 def __copy_metadata_json(table_name):
