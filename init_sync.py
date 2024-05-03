@@ -6,7 +6,7 @@ import shutil
 import logging
 
 from constants import TYPES_TO_CONVERT_TO_STR, MONGODB_READING_BATCH_SIZE, METADATA_FILE_NAME, DATA_FILES_PATH
-from utils import get_parquet_filename, to_string
+from utils import get_parquet_full_path_filename, to_string
 from push_file_to_lz import push_file_to_lz
 from flags import set_init_flag, clear_init_flag
 
@@ -21,8 +21,6 @@ def init_sync(mongodb_params, lz_params):
     # logger.debug(f"sleep(60) begin")
     # time.sleep(60)
     # logger.debug(f"sleep(60) ends")
-    
-    parquet_filename = get_parquet_filename(mongodb_params["collection"])
     
     client = pymongo.MongoClient(mongodb_params["conn_str"])
     db = client[mongodb_params["db_name"]]
@@ -79,15 +77,13 @@ def init_sync(mongodb_params, lz_params):
                 batch_df.rename(columns={key: key[:128]}, inplace=True)
 
         # logger.debug(batch_df.info())
+        logger.debug("creating parquet file...")
+        parquet_full_path_filename = get_parquet_full_path_filename(mongodb_params["collection"])
+        batch_df.to_parquet(parquet_full_path_filename, index=False)
         if index == 0:
-            logger.debug("creating parquet file...")
-            batch_df.to_parquet(parquet_filename, index=False, engine="fastparquet")
-        else:
-            logger.debug("appending to the parquet file...")
-            batch_df.to_parquet(parquet_filename, index=False, engine="fastparquet", append=True)
-    metadata_json_path = __copy_metadata_json(mongodb_params["collection"])
-    push_file_to_lz(metadata_json_path, lz_params["url"], mongodb_params["collection"], lz_params["app_id"], lz_params["secret"], lz_params["tenant_id"])
-    push_file_to_lz(parquet_filename, lz_params["url"], mongodb_params["collection"], lz_params["app_id"], lz_params["secret"], lz_params["tenant_id"])
+            metadata_json_path = __copy_metadata_json(mongodb_params["collection"])
+            push_file_to_lz(metadata_json_path, lz_params["url"], mongodb_params["collection"], lz_params["app_id"], lz_params["secret"], lz_params["tenant_id"])
+        push_file_to_lz(parquet_full_path_filename, lz_params["url"], mongodb_params["collection"], lz_params["app_id"], lz_params["secret"], lz_params["tenant_id"])
     clear_init_flag(mongodb_params["collection"])
     
 

@@ -30,3 +30,5 @@ CHANGE_STREAM_OPERATION_MAP_WHEN_INIT = {
     "update": 1,
     "delete": 2,
     }
+
+TEMP_PREFIX_DURING_INIT = "Temp_"
