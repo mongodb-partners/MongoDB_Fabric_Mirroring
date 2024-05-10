@@ -34,7 +34,7 @@ def listening(collection_name: str):
     accumulative_df: pd.DataFrame = None
     last_sync_time: float = time.time()
     
-    logger.info("start listening to change stream...")
+    logger.info(f"start listening to change stream for collection {collection_name}")
     for change in cursor:
         init_flag = get_init_flag(collection_name)
         # do post init flush if this is the first iteration after init is done
@@ -110,7 +110,7 @@ def listening(collection_name: str):
             if init_flag:
                 prefix=TEMP_PREFIX_DURING_INIT
             parquet_full_path_filename = get_parquet_full_path_filename(collection_name, prefix=prefix)
-            logger.debug(f"filename={parquet_full_path_filename}")
+            logger.info(f"writing parquet file: {parquet_full_path_filename}")
             accumulative_df.to_parquet(parquet_full_path_filename)
             accumulative_df = None
             if not init_flag:
@@ -120,7 +120,7 @@ def listening(collection_name: str):
 def __post_init_flush(table_name: str, logger):
     if not logger:
         logger = logging.getLogger(f"{__name__}[{table_name}]")
-    logger.debug("entering __post_init_flush()")
+    logger.info(f"begin post init flush of delta change for collection {table_name}")
     current_dir = os.path.dirname(os.path.abspath(__file__))
     table_dir = os.path.join(current_dir, DATA_FILES_PATH, table_name + os.sep)
     if not os.path.exists(table_dir):
@@ -137,6 +137,7 @@ def __post_init_flush(table_name: str, logger):
         logger.debug("renaming temp parquet file")
         logger.debug(f"old name: {temp_parquet_full_path}")
         logger.debug(f"new name: {new_parquet_full_path}")
+        logger.info(f"renaming parquet file from {temp_parquet_full_path} to {new_parquet_full_path}")
         os.rename(temp_parquet_full_path, new_parquet_full_path)
         push_file_to_lz(new_parquet_full_path, table_name)
 
