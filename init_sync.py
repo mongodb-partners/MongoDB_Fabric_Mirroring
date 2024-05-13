@@ -13,13 +13,14 @@ from flags import set_init_flag, clear_init_flag
 
 def init_sync(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
+    logger.info(f"begin init sync for {collection_name}")
     set_init_flag(collection_name)
     logger.debug(f"db_name={os.getenv("MONGO_DB_NAME")}")
     logger.debug(f"collection={collection_name}")
     # for test only
-    logger.debug(f"sleep(60) begin")
-    time.sleep(60)
-    logger.debug(f"sleep(60) ends")
+    # logger.debug(f"sleep(60) begin")
+    # time.sleep(60)
+    # logger.debug(f"sleep(60) ends")
     
     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
     db = client[os.getenv("MONGO_DB_NAME")]
@@ -78,6 +79,7 @@ def init_sync(collection_name: str):
         # logger.debug(batch_df.info())
         logger.debug("creating parquet file...")
         parquet_full_path_filename = get_parquet_full_path_filename(collection_name)
+        logger.info(f"writing parquet file: {parquet_full_path_filename}")
         batch_df.to_parquet(parquet_full_path_filename, index=False)
         if index == 0:
             metadata_json_path = __copy_metadata_json(collection_name)

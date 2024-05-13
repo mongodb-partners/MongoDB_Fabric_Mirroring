@@ -10,7 +10,7 @@ def push_file_to_lz(
     filepath: str,
     table_name: str,
 ):
-    logger.debug(f"pushing file to lz. table_name={table_name}, filepath={filepath}")
+    logger.info(f"pushing file to lz. table_name={table_name}, filepath={filepath}")
     access_token = __get_access_token(os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID"))
     __patch_file(access_token, filepath, os.getenv("LZ_URL"), table_name)
     # TODO: identify if any other parquet files in the dir, and remove them, leaving only the last one we just pushed
