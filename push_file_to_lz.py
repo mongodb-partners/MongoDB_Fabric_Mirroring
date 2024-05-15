@@ -11,10 +11,32 @@ def push_file_to_lz(
     table_name: str,
 ):
     logger.info(f"pushing file to lz. table_name={table_name}, filepath={filepath}")
-    access_token = __get_access_token(os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID"))
-    __patch_file(access_token, filepath, os.getenv("LZ_URL"), table_name)
-    # TODO: identify if any other parquet files in the dir, and remove them, leaving only the last one we just pushed
-
+    if not os.getenv("DEBUG__SKIP_PUSH_TO_LZ"):
+        access_token = __get_access_token(os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID"))
+        __patch_file(access_token, filepath, os.getenv("LZ_URL"), table_name)
+    # identify if any other parquet files in the dir, and remove them, leaving only the last one we just pushed
+    __clean_up_old_parquet_files(filepath)
+    
+def __clean_up_old_parquet_files(filepath: str):
+   filename_stem = os.path.splitext(os.path.basename(filepath))[0]
+   filename_ext = os.path.splitext(os.path.basename(filepath))[1]
+   # do nothing if it's a parquet file with prefix, or it's not a parquet file
+   if not filename_stem.isnumeric() or filename_ext != ".parquet":
+      return
+   logger.info(f"Cleaning up old parquet files. Current file: {filepath}")
+   dir = os.path.dirname(filepath)
+   current_filename = os.path.basename(filepath)
+   old_parquet_filename_list = [
+        filename
+        for filename in os.listdir(dir)
+        if os.path.splitext(filename)[1] == ".parquet"
+        and os.path.splitext(filename)[0].isnumeric()
+        and int(os.path.splitext(filename)[0]) < int(filename_stem)
+    ]
+   for old_parquet_filename in old_parquet_filename_list:
+      logger.info(f"Deleting old parquet file {old_parquet_filename}")
+      os.remove(os.path.join(dir, old_parquet_filename))
+   
 
 def __get_access_token(app_id,client_secret,directory_id):
     """It will create a access token to access the mail apis"""
