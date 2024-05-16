@@ -5,9 +5,13 @@ from constants import DATA_FILES_PATH, FILE_NAME_LENGTH
 def to_string(obj) -> str:
     return str(obj)
 
-def get_parquet_full_path_filename(table_name: str, prefix: str = "") -> str:
+def get_table_dir(table_name: str) -> str:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     table_dir = os.path.join(current_dir, DATA_FILES_PATH, table_name + os.sep)
+    return table_dir
+
+def get_parquet_full_path_filename(table_name: str, prefix: str = "") -> str:
+    table_dir = get_table_dir(table_name)
     if not os.path.exists(table_dir):
         os.makedirs(table_dir, exist_ok=True)
         return os.path.join(table_dir, prefix + __num_to_filename(1))
