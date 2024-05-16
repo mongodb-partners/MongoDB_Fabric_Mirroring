@@ -10,7 +10,7 @@ def create_app():
     
     @app.route("/")
     def home_page():
-        return "Hello World!"
+        return "The MongoDB Fabric Mirroring Service is running..."
     
     return app
 
