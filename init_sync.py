@@ -30,6 +30,7 @@ def init_sync(collection_name: str):
     set_init_flag(collection_name)
     logger.debug(f"db_name={os.getenv("MONGO_DB_NAME")}")
     logger.debug(f"collection={collection_name}")
+    enable_perf_timer = os.getenv("DEBUG__ENABLE_PERF_TIMER")
     
     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
     db = client[os.getenv("MONGO_DB_NAME")]
@@ -69,10 +70,11 @@ def init_sync(collection_name: str):
         #     batch_cursor = collection.find({"_id": {"$gt": last_id}}).sort({"_id": 1}).limit(batch_size)
         
 
-        # start_time = time.time()
+        read_start_time = time.time()
         batch_df = pd.DataFrame(list(batch_cursor))
-        # end_time = time.time()
-        # logger.debug(f"list(cursor) took {end_time-start_time:.2f} seconds")
+        read_end_time = time.time()
+        if enable_perf_timer:
+            logger.info(f"TIME: read took {read_end_time-read_start_time:.2f} seconds")
         
         # last_id = batch_df["_id"].iloc[-1]
 
@@ -99,16 +101,28 @@ def init_sync(collection_name: str):
             # truncate column name if longer than 128
             if len(key) > 128:
                 batch_df.rename(columns={key: key[:128]}, inplace=True)
+        
+        trans_end_time = time.time()
+        if enable_perf_timer:
+            logger.info(f"TIME: trans took {trans_end_time-read_end_time:.2f} seconds")
 
         # logger.debug(batch_df.info())
         logger.debug("creating parquet file...")
         parquet_full_path_filename = get_parquet_full_path_filename(collection_name)
         logger.info(f"writing parquet file: {parquet_full_path_filename}")
         batch_df.to_parquet(parquet_full_path_filename, index=False)
+        write_end_time = time.time()
+        if enable_perf_timer:
+            logger.info(f"TIME: write took {write_end_time-trans_end_time:.2f} seconds")
         if index == 0:
-            metadata_json_path = __copy_metadata_json(collection_name)
+            # do not copy, but send the template file directly
+            metadata_json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), METADATA_FILE_NAME)
             push_file_to_lz(metadata_json_path, collection_name)
+        push_start_time = time.time()
         push_file_to_lz(parquet_full_path_filename, collection_name)
+        push_end_time = time.time()
+        if enable_perf_timer:
+            logger.info(f"TIME: push took {push_end_time-push_start_time:.2f} seconds")
         # write current_skip to a file
         with open(current_skip_file_path, "w") as current_skip_file:
             # since when resuming, we will directly use the current_skip in 

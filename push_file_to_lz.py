@@ -24,12 +24,14 @@ def push_file_to_lz(
 
 
 def __clean_up_old_parquet_files(filepath: str):
+    if os.getenv("DEBUG__SKIP_PARQUET_FILES_CLEAN_UP"):
+        return
     filename_stem = os.path.splitext(os.path.basename(filepath))[0]
     filename_ext = os.path.splitext(os.path.basename(filepath))[1]
     # do nothing if it's a parquet file with prefix, or it's not a parquet file
     if not filename_stem.isnumeric() or filename_ext != ".parquet":
         return
-    logger.info(f"Cleaning up old parquet files. Current file: {filepath}")
+    logger.debug(f"Cleaning up old parquet files. Current file: {filepath}")
     dir = os.path.dirname(filepath)
     current_filename = os.path.basename(filepath)
     old_parquet_filename_list = [
@@ -40,7 +42,7 @@ def __clean_up_old_parquet_files(filepath: str):
         and int(os.path.splitext(filename)[0]) < int(filename_stem)
     ]
     for old_parquet_filename in old_parquet_filename_list:
-        logger.info(f"Deleting old parquet file {old_parquet_filename}")
+        logger.debug(f"Deleting old parquet file {old_parquet_filename}")
         os.remove(os.path.join(dir, old_parquet_filename))
 
 
@@ -59,20 +61,20 @@ def __get_access_token(app_id, client_secret, directory_id):
         "scope": "https://storage.azure.com/.default",
     }
     token_headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    # print(token_url)
+    # logger.debug(token_url)
     token_response = requests.post(token_url, data=token_data, headers=token_headers)
     token_response_dict = json.loads(token_response.text)
 
-    # print(token_response.text)
+    # logger.debug(token_response.text)
 
     token = token_response_dict.get("access_token")
 
     if token == None:
-        print("Unable to get access token")
-        print(str(token_response_dict))
+        logger.debug("Unable to get access token")
+        logger.debug(str(token_response_dict))
         raise Exception("Error in getting in access token")
     else:
-        #   print("Token is:" + token)
+        #   logger.debug("Token is:" + token)
         return token
 
 
@@ -81,23 +83,23 @@ def __patch_file(access_token, file_path, lz_url, table_name):
     base_url = lz_url + table_name + "/"
     token_url = base_url + file_name + "?resource=file"
     token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
-    print("creating file in lake")
+    logger.debug("creating file in lake")
 
     # Code to create file in lakehouse
     response = requests.put(token_url, data={}, headers=token_headers)
-    print(response)
+    logger.debug(response)
 
     token_url = base_url + file_name + "?position=0&action=append&flush=true"
     token_headers = {
         "Authorization": "Bearer " + access_token,
         "x-ms-file-name": file_name,
     }
-    print(token_url)
-    print("pushing data to file in lake")
+    logger.debug(token_url)
+    logger.debug("pushing data to file in lake")
 
     # file_path = file_name
     # Code to push Data to Lakehouse
     with open(file_path, "rb") as file:
         file_contents = file.read()
         response = requests.patch(token_url, data=file_contents, headers=token_headers)
-    print(response)
+    logger.debug(response)
