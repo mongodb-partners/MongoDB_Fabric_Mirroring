@@ -47,12 +47,63 @@
                 "description": "The SKU of App Service Plan."
             }
         },
-        "connectionString": {
+        "MongodbConnectionString": {
             "type": "String",
             "metadata": {
                 "description": "The MongoDB Connection URI"
             }
+        },
+        "MongodbDatabaseName": {
+            "type": "String",
+            "metadata": {
+                "description": "The MongoDB Database Name"
+            }
+        },
+        "MongodbCollection": {
+            "type": "String",
+            "metadata": {
+                "description": "The MongoDB Collection Name"
+            }
+        },
+        "FabricLandingZoneURL": {
+            "type": "String",
+            "metadata": {
+                "description": "Fabric Landing Zone URL"
+            }
+        },
+        "AzureApplicationID": {
+            "type": "String",
+            "metadata": {
+                "description": "The Application (client) ID from Azure App registrations"
+            }
+        },
+        "AzureApplicationSecret": {
+            "type": "String",
+            "metadata": {
+                "description": "The Application Secret string from Azure App registrations"
+            }
+        },
+        "AzureApplicationTenantID": {
+            "type": "String",
+            "metadata": {
+                "description": "The Directory (tenant) ID from Azure App registrations"
+            }
+        },
+        "InitSyncBatchSize": {
+            "defaultValue": "100000",
+            "type": "String",
+            "metadata": {
+                "description": "Batch size (rows) used for initial sync"
+            }
+        },
+        "IncrementalSyncBatchSize": {
+            "defaultValue": "10000",
+            "type": "String",
+            "metadata": {
+                "description": "Batch size (rows) used for incremental sync"
+            }
         }
+        
     },
     "variables": {
         "appServicePlanPortalName": "[format('AppServicePlan-{0}', parameters('webAppName'))]"
@@ -101,15 +152,15 @@
             ],
             "properties": {
                 "LOG_LEVEL": "INFO",
-                "MONGO_CONN_STR": "[parameters('connectionString')]",
-                "MONGO_DB_NAME": "",
-                "MONGO_COLLECTION": "",
-                "LZ_URL": "",
-                "APP_ID": "",
-                "SECRET": "",
-                "TENANT_ID": "",
-                "INIT_LOAD_BATCH_SIZE": "",
-                "DELTA_SYNC_BATCH_SIZE": ""
+                "MONGO_CONN_STR": "[parameters('MongodbConnectionString')]",
+                "MONGO_DB_NAME": "[parameters('MongodbDatabaseName')]",
+                "MONGO_COLLECTION": "[parameters('MongodbCollection')]",
+                "LZ_URL": "[parameters('FabricLandingZoneURL')]",
+                "APP_ID": "[parameters('AzureApplicationID')]",
+                "SECRET": "[parameters('AzureApplicationSecret')]",
+                "TENANT_ID": "[parameters('AzureApplicationTenantID')]",
+                "INIT_LOAD_BATCH_SIZE": "[parameters('InitSyncBatchSize')]",
+                "DELTA_SYNC_BATCH_SIZE": "[parameters('IncrementalSyncBatchSize')]"
             }
         },
         {
@@ -125,7 +176,6 @@
                 "isManualIntegration": true,
                 "ScmType": "ExternalGit"
             }
-            // "condition": "[contains(parameters('repoUrl'), 'http')]"
         }
     ]
 }
