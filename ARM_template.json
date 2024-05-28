@@ -3,20 +3,13 @@
     "contentVersion": "1.0.0.0",
     "parameters": {
         "webAppName": {
-            // "defaultValue": "[format('webApp-{0}', uniqueString(resourceGroup().id))]",
+            "defaultValue": "MongoDB-Fabric-Mirroring-Service-",
             "minLength": 2,
             "type": "String",
             "metadata": {
                 "description": "Web app name."
             }
         },
-        // "location": {
-        //     // "defaultValue": "[resourceGroup().location]",
-        //     "type": "String",
-        //     "metadata": {
-        //         "description": "Location for all resources."
-        //     }
-        // },
         "sku": {
             "defaultValue": "F1",
             "type": "String",
@@ -52,20 +45,6 @@
             ],
             "metadata": {
                 "description": "The SKU of App Service Plan."
-            }
-        },
-        "linuxFxVersion": {
-            "defaultValue": "PYTHON|3.12",
-            "type": "String",
-            "metadata": {
-                "description": "The Runtime stack of current web app"
-            }
-        },
-        "repoUrl": {
-            "defaultValue": "https://github.com/mongodb-partners/MongoDB_Fabric_Mirroring.git",
-            "type": "String",
-            "metadata": {
-                "description": "Optional Git Repo URL"
             }
         },
         "connectionString": {
@@ -107,7 +86,7 @@
                 "httpsOnly": true,
                 "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanPortalName'))]",
                 "siteConfig": {
-                    "linuxFxVersion": "[parameters('linuxFxVersion')]",
+                    "linuxFxVersion": "PYTHON|3.12",
                     "minTlsVersion": "1.2",
                     "ftpsState": "FtpsOnly"
                 }
@@ -141,12 +120,12 @@
                 "[resourceId('Microsoft.Web/sites', parameters('webAppName'))]"
             ],
             "properties": {
-                "repoUrl": "[parameters('repoUrl')]",
+                "repoUrl": "https://github.com/mongodb-partners/MongoDB_Fabric_Mirroring.git",
                 "branch": "main",
                 "isManualIntegration": true,
                 "ScmType": "ExternalGit"
-            },
-            "condition": "[contains(parameters('repoUrl'), 'http')]"
+            }
+            // "condition": "[contains(parameters('repoUrl'), 'http')]"
         }
     ]
 }
