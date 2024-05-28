@@ -10,7 +10,7 @@
                 "description": "Web app name."
             }
         },
-        "sku": {
+        "SKU": {
             "defaultValue": "F1",
             "type": "String",
             "allowedValues": [
@@ -64,7 +64,7 @@
             "name": "[variables('appServicePlanPortalName')]",
             "location": "[resourceGroup().location]",
             "sku": {
-                "name": "[parameters('sku')]"
+                "name": "[parameters('SKU')]"
             },
             "kind": "linux",
             "properties": {
