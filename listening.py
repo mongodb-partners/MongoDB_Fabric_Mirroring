@@ -60,9 +60,7 @@ def listening(collection_name: str):
             row_marker_value = CHANGE_STREAM_OPERATION_MAP_WHEN_INIT[operationType]
         else:
             row_marker_value = CHANGE_STREAM_OPERATION_MAP[operationType]
-        # As Microsoft Eng. Team suggested, better keep the PK at the same
-        # location, hence inserting row_marker after _id
-        df.insert(1, ROW_MARKER_COLUMN_NAME, [row_marker_value])
+        df.insert(0, ROW_MARKER_COLUMN_NAME, [row_marker_value])
         # logger.debug("constructed pandas DataFrame:")
         # logger.debug(df)
         # logger.debug("pandas DataFrame schema:")
