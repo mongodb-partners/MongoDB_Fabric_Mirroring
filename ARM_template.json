@@ -3,7 +3,6 @@
     "contentVersion": "1.0.0.0",
     "parameters": {
         "webAppName": {
-            // "defaultValue": "MongoDB-Fabric-Mirroring-Service",
             "minLength": 2,
             "type": "String",
             "metadata": {
