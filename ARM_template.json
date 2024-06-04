@@ -146,7 +146,7 @@
         {
             "type": "Microsoft.Web/sites/config",
             "apiVersion": "2021-02-01",
-            "name": "[format('{0}/{1}', parameters('webAppName'), 'appsettings')]",
+            "name": "sites/appsettings",
             "dependsOn": [
                 "[resourceId('Microsoft.Web/sites', parameters('webAppName'))]"
             ],
@@ -166,7 +166,7 @@
         {
             "type": "Microsoft.Web/sites/sourcecontrols",
             "apiVersion": "2021-02-01",
-            "name": "[format('{0}/{1}', parameters('webAppName'), 'web')]",
+            "name": "sites/web",
             "dependsOn": [
                 "[resourceId('Microsoft.Web/sites', parameters('webAppName'))]"
             ],
