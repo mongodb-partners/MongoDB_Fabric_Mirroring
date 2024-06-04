@@ -34,3 +34,5 @@ CHANGE_STREAM_OPERATION_MAP_WHEN_INIT = {
 TEMP_PREFIX_DURING_INIT = "Temp_"
 
 INIT_SYNC_CURRENT_SKIP_FILE_NAME = "init_sync_current_skip"
+
+DELTA_SYNC_CACHE_PARQUET_FILENAME = "incremental_change_cache.parquet"

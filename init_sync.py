@@ -23,7 +23,16 @@ def init_sync(collection_name: str):
     # skip init_sync if there's already parquet files and no current_skip file
     table_dir = get_table_dir(collection_name)
     current_skip_file_path = os.path.join(table_dir, INIT_SYNC_CURRENT_SKIP_FILE_NAME)
-    if not os.path.exists(current_skip_file_path) and glob.glob(os.path.join(table_dir, "*.parquet")):
+    # needs to exclude the situation of cache or temp parquet files exist but
+    # not normal numbered parquet files, in which case we shouldn't skip init sync
+    if (not os.path.exists(current_skip_file_path) 
+        and os.path.exists(table_dir)
+        and any(
+            file.endswith(".parquet") 
+            and os.path.splitext(file)[0].isnumeric()
+            for file in os.listdir(table_dir)
+        )
+    ):
         logger.info(f"init sync for collection {collection_name} has already finished previously. Skipping init sync this time.")
         return
     logger.info(f"begin init sync for {collection_name}")
