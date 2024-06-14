@@ -35,4 +35,6 @@ TEMP_PREFIX_DURING_INIT = "Temp_"
 
 INIT_SYNC_CURRENT_SKIP_FILE_NAME = "init_sync_current_skip"
 
-DELTA_SYNC_CACHE_PARQUET_FILENAME = "incremental_change_cache.parquet"
+INIT_SYNC_LAST_ID_FILE_NAME = "last_id.pkl"
+
+DELTA_SYNC_CACHE_PARQUET_FILE_NAME = "incremental_change_cache.parquet"

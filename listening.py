@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import logging
 import os
+import pickle
 
 from constants import (
     ROW_MARKER_COLUMN_NAME,
@@ -11,7 +12,7 @@ from constants import (
     TYPES_TO_CONVERT_TO_STR,
     TEMP_PREFIX_DURING_INIT,
     DATA_FILES_PATH,
-    DELTA_SYNC_CACHE_PARQUET_FILENAME,
+    DELTA_SYNC_CACHE_PARQUET_FILE_NAME,
 )
 from utils import to_string, get_parquet_full_path_filename, get_table_dir
 from push_file_to_lz import push_file_to_lz
@@ -33,7 +34,7 @@ def listening(collection_name: str):
     cursor = collection.watch(full_document='updateLookup')
     
     table_dir = get_table_dir(collection_name)
-    cache_parquet_full_path = os.path.join(table_dir, DELTA_SYNC_CACHE_PARQUET_FILENAME)
+    cache_parquet_full_path = os.path.join(table_dir, DELTA_SYNC_CACHE_PARQUET_FILE_NAME)
     cached_change_count = 0
     if os.path.exists(cache_parquet_full_path):
         # cache exists, needs to restore cache count
@@ -96,7 +97,7 @@ def listening(collection_name: str):
         # instead of accumulating to df, accumulating directly to parquet file, like accumulation.parquet
         if not os.path.exists(table_dir):
             os.makedirs(table_dir, exist_ok=True)
-        df.to_parquet(cache_parquet_full_path, index=False, append=os.path.exists(cache_parquet_full_path))
+        df.to_parquet(cache_parquet_full_path, index=False, engine="fastparquet", append=os.path.exists(cache_parquet_full_path))
         cached_change_count += 1
         
         # Always rename chached parquet if exists
