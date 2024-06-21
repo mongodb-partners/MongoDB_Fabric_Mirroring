@@ -70,10 +70,12 @@ def init_sync(collection_name: str):
     #         if content.isnumeric():
     #             init_skip = int(content)
     #             logger.info(f"interrupted init sync detected, continuing with current_skip={init_skip}")
-                
+    
+    # TODO: anti-crash for this count as well
+    processed_doc_count = 0
     
     # for index, current_skip in enumerate(range(init_skip, count, batch_size)):
-    while True:
+    while processed_doc_count < count:
         # for debug only
         debug_env_var_sleep_sec = os.getenv("DEBUG__INIT_SYNC_SLEEP_SEC")
         if debug_env_var_sleep_sec and debug_env_var_sleep_sec.isnumeric():
@@ -162,6 +164,7 @@ def init_sync(collection_name: str):
         with open(last_id_file_path, "wb") as last_id_file:
             logger.info(f"writing last_id into file: {last_id}")
             pickle.dump(last_id, last_id_file)
+        processed_doc_count += batch_size
         # FOR TEST ONLY
         # logger.info("sleep(10) after write and push a parquet file")
         # time.sleep(10)

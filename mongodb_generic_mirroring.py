@@ -44,16 +44,17 @@ def mirror():
     threads: list[Thread] = []
 
     for col in collection_list:
+        # TODO: find a better way to ensure Change Stream monitoring starts before init sync
+        Thread(target=listening, args=(col,)).start()
+        # listener_thread = Thread(target=listening, args=(col,))
+        # listener_thread.start()
+        # threads.append(listener_thread)
 
         Thread(target=init_sync, args=(col,)).start()
         # init_thread = Thread(target=init_sync, args=(col,))
         # init_thread.start()
         # threads.append(init_thread)
 
-        Thread(target=listening, args=(col,)).start()
-        # listener_thread = Thread(target=listening, args=(col,))
-        # listener_thread.start()
-        # threads.append(listener_thread)
 
     # for thread in threads:
     #     thread.join()
