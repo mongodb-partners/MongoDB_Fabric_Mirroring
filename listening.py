@@ -41,7 +41,7 @@ def listening(collection_name: str):
     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
     db = client[os.getenv("MONGO_DB_NAME")]
     collection = db[collection_name]
-    cursor = collection.watch(full_document='updateLookup', resume_after=resume_token, batch_size=int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
+    cursor = collection.watch(full_document='updateLookup', resume_after=resume_token)
     
     
     cache_parquet_full_path = os.path.join(table_dir, DELTA_SYNC_CACHE_PARQUET_FILE_NAME)
