@@ -1,4 +1,5 @@
 import pymongo
+from pymongo.collection import Collection
 import time
 import os
 import pandas as pd
@@ -15,6 +16,7 @@ from constants import (
     DATA_FILES_PATH, 
     INIT_SYNC_CURRENT_SKIP_FILE_NAME,
     INIT_SYNC_LAST_ID_FILE_NAME,
+    INIT_SYNC_MAX_ID_FILE_NAME,
     )
 from utils import get_parquet_full_path_filename, to_string, get_table_dir
 from push_file_to_lz import push_file_to_lz
@@ -51,6 +53,18 @@ def init_sync(collection_name: str):
     
     count = collection.estimated_document_count()
     
+    # use max_id as the mechanism to set the stopping point of init sync
+    max_id_file_path = os.path.join(table_dir, INIT_SYNC_MAX_ID_FILE_NAME)
+    if os.path.exists(max_id_file_path):
+        with open(max_id_file_path, "rb") as max_id_file:
+            max_id = pickle.load(max_id_file)
+            logger.info(f"resumed max_id={max_id}")
+    else:
+        max_id = __get_max_id(collection)
+        with open(max_id_file_path, "wb") as max_id_file:
+            logger.info(f"writing max_id into file: {max_id}")
+            pickle.dump(max_id, max_id_file)
+    
     batch_size = int(os.getenv("INIT_LOAD_BATCH_SIZE"))
     
     columns_to_convert_to_str = None
@@ -71,11 +85,8 @@ def init_sync(collection_name: str):
     #             init_skip = int(content)
     #             logger.info(f"interrupted init sync detected, continuing with current_skip={init_skip}")
     
-    # TODO: anti-crash for this count as well
-    processed_doc_count = 0
-    
     # for index, current_skip in enumerate(range(init_skip, count, batch_size)):
-    while processed_doc_count < count:
+    while last_id is None or last_id < max_id:
         # for debug only
         debug_env_var_sleep_sec = os.getenv("DEBUG__INIT_SYNC_SLEEP_SEC")
         if debug_env_var_sleep_sec and debug_env_var_sleep_sec.isnumeric():
@@ -164,7 +175,6 @@ def init_sync(collection_name: str):
         with open(last_id_file_path, "wb") as last_id_file:
             logger.info(f"writing last_id into file: {last_id}")
             pickle.dump(last_id, last_id_file)
-        processed_doc_count += batch_size
         # FOR TEST ONLY
         # logger.info("sleep(10) after write and push a parquet file")
         # time.sleep(10)
@@ -178,3 +188,14 @@ def init_sync(collection_name: str):
     
     clear_init_flag(collection_name)
     logger.info(f"init sync completed for collection {collection_name}")
+
+def __get_max_id(collection: Collection):
+    pipeline = [
+        { "$sort": { "_id": -1 } },
+        { "$limit": 1 },
+        { "$project": { "_id": 1 } }
+    ]
+    result = collection.aggregate(pipeline)
+    doc = result.next()
+    max_id = doc["_id"]
+    return max_id

@@ -105,8 +105,6 @@ def listening(collection_name: str):
         
         # INCREMENTAL SYNC ANTI-CRASH REFACTORING
         # instead of accumulating to df, accumulating directly to parquet file, like accumulation.parquet
-        if not os.path.exists(table_dir):
-            os.makedirs(table_dir, exist_ok=True)
         df.to_parquet(cache_parquet_full_path, index=False, engine="fastparquet", append=os.path.exists(cache_parquet_full_path))
         cached_change_count += 1
         

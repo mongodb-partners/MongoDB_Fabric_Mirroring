@@ -37,6 +37,8 @@ INIT_SYNC_CURRENT_SKIP_FILE_NAME = "init_sync_current_skip"
 
 INIT_SYNC_LAST_ID_FILE_NAME = "last_id.pkl"
 
+INIT_SYNC_MAX_ID_FILE_NAME = "max_id.pkl"
+
 DELTA_SYNC_CACHE_PARQUET_FILE_NAME = "incremental_change_cache.parquet"
 
 DELTA_SYNC_RESUME_TOKEN_FILE_NAME = "resume_token.pkl"
