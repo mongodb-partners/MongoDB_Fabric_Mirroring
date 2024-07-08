@@ -100,7 +100,7 @@ def init_sync(collection_name: str):
         if not last_id:
             batch_cursor = collection.find().sort({"_id": 1}).limit(batch_size)
         else:
-            batch_cursor = collection.find({"_id": {"$gt": last_id}}).sort({"_id": 1}).limit(batch_size)
+            batch_cursor = collection.find({"_id": {"$gt": last_id}, "_id": {"$lte": max_id}}).sort({"_id": 1}).limit(batch_size)
         
 
         read_start_time = time.time()
