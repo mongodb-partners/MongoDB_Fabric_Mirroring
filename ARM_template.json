@@ -47,7 +47,7 @@
             }
         },
         "MongodbConnectionString": {
-            "type": "String",
+            "type": "securestring",
             "metadata": {
                 "description": "The MongoDB Connection URI"
             }
@@ -77,7 +77,7 @@
             }
         },
         "AzureApplicationSecret": {
-            "type": "String",
+            "type": "securestring",
             "metadata": {
                 "description": "The Application Secret string from Azure App registrations"
             }

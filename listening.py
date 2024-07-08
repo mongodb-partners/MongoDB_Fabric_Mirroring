@@ -3,6 +3,8 @@ import pandas as pd
 import time
 import logging
 import os
+import pickle
+from threading import Thread
 
 from constants import (
     ROW_MARKER_COLUMN_NAME,
@@ -11,11 +13,13 @@ from constants import (
     TYPES_TO_CONVERT_TO_STR,
     TEMP_PREFIX_DURING_INIT,
     DATA_FILES_PATH,
-    DELTA_SYNC_CACHE_PARQUET_FILENAME,
+    DELTA_SYNC_CACHE_PARQUET_FILE_NAME,
+    DELTA_SYNC_RESUME_TOKEN_FILE_NAME,
 )
 from utils import to_string, get_parquet_full_path_filename, get_table_dir
 from push_file_to_lz import push_file_to_lz
 from flags import get_init_flag
+from init_sync import init_sync
 
 
 # MAX_ROWS = 1
@@ -27,17 +31,29 @@ def listening(collection_name: str):
     logger.debug(f"db_name={os.getenv("MONGO_DB_NAME")}")
     logger.debug(f"collection={collection_name}")
     post_init_flush_done = False
+    
+    table_dir = get_table_dir(collection_name)
+    resume_token_file_full_path = os.path.join(table_dir, DELTA_SYNC_RESUME_TOKEN_FILE_NAME)
+    resume_token = None
+    if os.path.exists(resume_token_file_full_path):
+        with open(resume_token_file_full_path, "rb") as resume_token_file:
+            resume_token = pickle.load(resume_token_file)
+            logger.info(f"interrupted incremental sync detected, continuing with resume_token={resume_token}")
+    
     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
     db = client[os.getenv("MONGO_DB_NAME")]
     collection = db[collection_name]
-    cursor = collection.watch(full_document='updateLookup')
+    cursor = collection.watch(full_document='updateLookup', resume_after=resume_token)
     
-    table_dir = get_table_dir(collection_name)
-    cache_parquet_full_path = os.path.join(table_dir, DELTA_SYNC_CACHE_PARQUET_FILENAME)
+    
+    cache_parquet_full_path = os.path.join(table_dir, DELTA_SYNC_CACHE_PARQUET_FILE_NAME)
     cached_change_count = 0
     if os.path.exists(cache_parquet_full_path):
         # cache exists, needs to restore cache count
         cached_change_count = len(pd.read_parquet(cache_parquet_full_path))
+        
+    # start init sync after we get cursor from Change Stream
+    Thread(target=init_sync, args=(collection_name,)).start()
     
     logger.info(f"start listening to change stream for collection {collection_name}")
     for change in cursor:
@@ -94,10 +110,15 @@ def listening(collection_name: str):
         
         # INCREMENTAL SYNC ANTI-CRASH REFACTORING
         # instead of accumulating to df, accumulating directly to parquet file, like accumulation.parquet
-        if not os.path.exists(table_dir):
-            os.makedirs(table_dir, exist_ok=True)
-        df.to_parquet(cache_parquet_full_path, index=False, append=os.path.exists(cache_parquet_full_path))
+        df.to_parquet(cache_parquet_full_path, index=False, engine="fastparquet", append=os.path.exists(cache_parquet_full_path))
         cached_change_count += 1
+        
+        # wirte _id of current change as resume token to file, after successful
+        #     write current change to cache parquet
+        resume_token = change["_id"]
+        with open(resume_token_file_full_path, "wb") as resume_token_file:
+            logger.info(f"writing resume_token into file: {resume_token}")
+            pickle.dump(resume_token, resume_token_file)
         
         # Always rename chached parquet if exists
         # But, if the collection is initializing, rename cache parquet file with
@@ -114,6 +135,8 @@ def listening(collection_name: str):
             if not init_flag:
                 push_file_to_lz(parquet_full_path_filename, collection_name)
             cached_change_count = 0
+            # from June-14 meeting with Vasanth Kumar:
+            # TODO: new location to update resume token
 
 
 def __post_init_flush(table_name: str, logger):
