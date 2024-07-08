@@ -50,7 +50,8 @@ def mirror():
         # listener_thread.start()
         # threads.append(listener_thread)
 
-        Thread(target=init_sync, args=(col,)).start()
+        # Moved the starting of init_sync to listening
+        # Thread(target=init_sync, args=(col,)).start()
         # init_thread = Thread(target=init_sync, args=(col,))
         # init_thread.start()
         # threads.append(init_thread)

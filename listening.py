@@ -4,6 +4,7 @@ import time
 import logging
 import os
 import pickle
+from threading import Thread
 
 from constants import (
     ROW_MARKER_COLUMN_NAME,
@@ -18,6 +19,7 @@ from constants import (
 from utils import to_string, get_parquet_full_path_filename, get_table_dir
 from push_file_to_lz import push_file_to_lz
 from flags import get_init_flag
+from init_sync import init_sync
 
 
 # MAX_ROWS = 1
@@ -49,6 +51,9 @@ def listening(collection_name: str):
     if os.path.exists(cache_parquet_full_path):
         # cache exists, needs to restore cache count
         cached_change_count = len(pd.read_parquet(cache_parquet_full_path))
+        
+    # start init sync after we get cursor from Change Stream
+    Thread(target=init_sync, args=(collection_name,)).start()
     
     logger.info(f"start listening to change stream for collection {collection_name}")
     for change in cursor:
