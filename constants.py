@@ -42,3 +42,11 @@ INIT_SYNC_MAX_ID_FILE_NAME = "max_id.pkl"
 DELTA_SYNC_CACHE_PARQUET_FILE_NAME = "incremental_change_cache.parquet"
 
 DELTA_SYNC_RESUME_TOKEN_FILE_NAME = "resume_token.pkl"
+
+INTERNAL_SCHEMA_FILE_NAME = "internal_schema.pkl"
+
+COLUMN_RENAMING_FILE_NAME = "column_renaming.pkl"
+
+# dict keys for schema
+TYPE_KEY = "type"
+DTYPE_KEY = "dtype"

@@ -7,6 +7,7 @@ import json
 
 from init_sync import init_sync
 from listening import listening
+from schema_utils import init_table_schema
 
 
 def mirror():
@@ -41,18 +42,20 @@ def mirror():
             " name, or "all" for all collections in the database.'
         )
 
-    threads: list[Thread] = []
+    # threads: list[Thread] = []
 
-    for col in collection_list:
-        # TODO: find a better way to ensure Change Stream monitoring starts before init sync
-        Thread(target=listening, args=(col,)).start()
-        # listener_thread = Thread(target=listening, args=(col,))
+    for collection_name in collection_list:
+        
+        init_table_schema(collection_name)
+        
+        Thread(target=listening, args=(collection_name,)).start()
+        # listener_thread = Thread(target=listening, args=(collection_name,))
         # listener_thread.start()
         # threads.append(listener_thread)
 
         # Moved the starting of init_sync to listening
-        # Thread(target=init_sync, args=(col,)).start()
-        # init_thread = Thread(target=init_sync, args=(col,))
+        # Thread(target=init_sync, args=(collection_name,)).start()
+        # init_thread = Thread(target=init_sync, args=(collection_name,))
         # init_thread.start()
         # threads.append(init_thread)
 
