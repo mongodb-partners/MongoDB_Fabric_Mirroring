@@ -25,7 +25,8 @@ def write_table_schema_to_file(table_name: str):
 
 def init_table_schema(table_name: str, table_schema: dict):
     __schemas[table_name] = table_schema
-    __locks[table_name] = threading.Lock()    
+    __locks[table_name] = threading.Lock()
+    write_table_schema_to_file(table_name)
 
 def get_table_schema(table_name: str) -> dict:
     return __schemas.get(table_name, None)
@@ -37,7 +38,7 @@ def append_schema_column(table_name: str, column_name: str, column_schema: dict)
     # 0. get the lock of the collection
     with __locks[table_name]:
         # 1. append column
-        __schemas[table_name][column_name] = column_schema
+        __schemas.setdefault(table_name, {})[column_name] = column_schema
         # 2. write into file
         write_table_schema_to_file(table_name)
 
@@ -54,11 +55,12 @@ def write_table_column_renaming_to_file(table_name: str):
 
 def init_column_renaming(table_name: str, column_renaming: dict):
     __column_renamings[table_name] = column_renaming
+    write_table_column_renaming_to_file(table_name)
 
 def add_column_renaming(table_name: str, original_column_name: str, new_column_name: str):
-    # TODO: determine if we need lock here
-    __column_renamings[table_name][original_column_name] = new_column_name
-    write_table_column_renaming_to_file(table_name)
+    with __locks[table_name]:
+        __column_renamings.setdefault(table_name, {})[original_column_name] = new_column_name
+        write_table_column_renaming_to_file(table_name)
     
 def find_column_renaming(table_name: str, column_name: str) -> str:
     return __column_renamings.get(table_name, {}).get(column_name, None)

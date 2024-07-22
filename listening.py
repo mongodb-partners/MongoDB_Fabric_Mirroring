@@ -80,60 +80,7 @@ def listening(collection_name: str):
         df = pd.DataFrame([doc])
         
         # process df according to internal schema
-        # TODO: consider if this section be a function so we can reuse between init & delta
-        for col_name in df.keys().values:
-            processed_col_name = schemas.find_column_renaming(collection_name, col_name)
-            schema_of_this_column = schemas.get_table_column_schema(collection_name, col_name)
-            if not processed_col_name and not schema_of_this_column:
-                # new column, process it and append schema
-                schema_of_this_column = schema_utils.init_column_schema(current_dtype, current_first_item)
-                processed_col_name = schema_utils.process_column_name(col_name)
-                if processed_col_name != col_name:
-                    schemas.add_column_renaming(
-                        collection_name, col_name, processed_col_name
-                    )
-                schemas.append_schema_column(collection_name, processed_col_name, schema_of_this_column)
-            
-            # processed_col_name might have been updated for new column, so no need to use elif here
-            # 2 scenarios are included by this if clause:
-            #       1. existing column renaming found
-            #       2. new column with the need to rename
-            # and the extra processed_col_name can make sure to exclude the scenario 
-            # of existing column without the need to rename, in which case processed_col_name 
-            # from find_column_renaming() will be None.
-            if processed_col_name and processed_col_name != col_name:
-                df.rename(columns={col_name: processed_col_name}, inplace=True)
-                col_name = processed_col_name
-            
-            current_dtype = df[col_name].dtype
-            current_first_item = df[col_name][0]
-            current_item_type = type(current_first_item)
-            
-            # schema_of_this_colum should always exists at this point
-            # existing column or new column with schema appended, process accroding to schema_of_this_colum
-            if current_item_type != schema_of_this_column[TYPE_KEY]:
-                logger.info(f"different item type detected: current_item_type={current_item_type}, item type from schema={schema_of_this_column[TYPE_KEY]}")
-                df[col_name] = df[col_name].apply(
-                    schema_utils.TYPE_TO_CONVERT_FUNCTION_MAP.get(
-                        schema_of_this_column[TYPE_KEY], 
-                        schema_utils.do_nothing
-                    )
-                )
-            if current_dtype != schema_of_this_column[DTYPE_KEY]:
-                try:
-                    df[col_name] = df[col_name].astype(schema_of_this_column[DTYPE_KEY])
-                except (ValueError, TypeError) as e:
-                    logger.warning(
-                        f"An {e.__class__.__name__} was caught when trying to convert " +
-                        f"the dtype of the column {col_name} from {current_dtype} to {schema_of_this_column[DTYPE_KEY]}"
-                    )
-            
-                
-        
-        
-        
-        
-        
+        schema_utils.process_dataframe(collection_name, df)
         
         if init_flag:
             logger.debug(f"collection {collection_name} still initializing, use UPSERT instead of INSERT")
@@ -145,41 +92,6 @@ def listening(collection_name: str):
         # logger.debug(df)
         # logger.debug("pandas DataFrame schema:")
         # logger.debug(df.dtypes)
-        
-        
-        
-        
-        
-        
-        
-        
-        # TODO: TO BE REMOVED
-        # # data type conversion
-        # for key in df.keys():
-        #     first_item = df[key][0]
-        #     data_type = type(first_item)
-        #     # logger.debug(f"key: {key}")
-        #     # logger.debug(f"data_type: {data_type}")
-        #     if any(isinstance(first_item, t) for t in TYPES_TO_CONVERT_TO_STR):
-        #         df[key] = df[key].apply(to_string)
-        #     # fix of the "Date" data type from MongoDB. Now it will become "datetime2" in Fabric
-        #     if df[key].dtype == "datetime64[ns]":
-        #         logger.debug("trying to convert datetime column...")
-        #         df[key] = df[key].astype("datetime64[ms]")
-        #     # remove spaces in key/column name
-        #     if " " in key:
-        #         df.rename(columns={key: key.replace(" ", "_")}, inplace=True)
-            
-        #     # truncate column name if longer than 128
-        #     if len(key) > 128:
-        #         df.rename(columns={key: key[:128]}, inplace=True)
-        
-        
-        
-        
-        
-        
-        
         
         # logger.debug("pandas DataFrame schema after conversion:")
         # logger.debug(df.dtypes)
@@ -238,4 +150,3 @@ def __post_init_flush(table_name: str, logger):
         logger.info(f"renaming parquet file from {temp_parquet_full_path} to {new_parquet_full_path}")
         os.rename(temp_parquet_full_path, new_parquet_full_path)
         push_file_to_lz(new_parquet_full_path, table_name)
-

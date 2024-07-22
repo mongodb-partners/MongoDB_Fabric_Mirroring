@@ -18,6 +18,7 @@ from constants import (
     INIT_SYNC_LAST_ID_FILE_NAME,
     INIT_SYNC_MAX_ID_FILE_NAME,
     )
+import schema_utils
 from utils import get_parquet_full_path_filename, to_string, get_table_dir
 from push_file_to_lz import push_file_to_lz
 from flags import set_init_flag, clear_init_flag
@@ -115,30 +116,8 @@ def init_sync(collection_name: str):
         
         raw_last_id = batch_df["_id"].iloc[-1]
         
-        for key in batch_df.keys():
-            # only detect column type and determine if convert in the first batch
-            if columns_to_convert_to_str is None:
-                columns_to_convert_to_str = []
-                # logger.debug(f"key: {key}")
-                first_item = batch_df[key][0]
-                data_type = type(first_item)
-                # logger.debug(f"data_type: {data_type}")
-                if any(isinstance(first_item, t) for t in TYPES_TO_CONVERT_TO_STR):
-                    columns_to_convert_to_str.append(key)
-            if key in columns_to_convert_to_str:
-                batch_df[key] = batch_df[key].apply(to_string)
-                # logger.debug(f"data_type afterwards: {type(batch_df[key][0])}")
-            # fix of the "Date" data type from MongoDB. Now it will become "datetime2" in Fabric
-            if batch_df[key].dtype == "datetime64[ns]":
-                logger.debug("trying to convert datetime column...")
-                batch_df[key] = batch_df[key].astype("datetime64[ms]")
-            # remove spaces in key/column name
-            if " " in key:
-                batch_df.rename(columns={key: key.replace(" ", "_")}, inplace=True)
-            
-            # truncate column name if longer than 128
-            if len(key) > 128:
-                batch_df.rename(columns={key: key[:128]}, inplace=True)
+        # process df according to internal schema
+        schema_utils.process_dataframe(collection_name, batch_df)
         
         trans_end_time = time.time()
         if enable_perf_timer:
