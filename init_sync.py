@@ -61,10 +61,11 @@ def init_sync(collection_name: str):
             max_id = pickle.load(max_id_file)
             logger.info(f"resumed max_id={max_id}")
     else:
-        max_id = __get_max_id(collection)
-        with open(max_id_file_path, "wb") as max_id_file:
-            logger.info(f"writing max_id into file: {max_id}")
-            pickle.dump(max_id, max_id_file)
+        max_id = __get_max_id(collection, logger)
+        if max_id:
+            with open(max_id_file_path, "wb") as max_id_file:
+                logger.info(f"writing max_id into file: {max_id}")
+                pickle.dump(max_id, max_id_file)
     
     batch_size = int(os.getenv("INIT_LOAD_BATCH_SIZE"))
     
@@ -168,13 +169,16 @@ def init_sync(collection_name: str):
     clear_init_flag(collection_name)
     logger.info(f"init sync completed for collection {collection_name}")
 
-def __get_max_id(collection: Collection):
+def __get_max_id(collection: Collection, logger: logging.Logger):
     pipeline = [
         { "$sort": { "_id": -1 } },
         { "$limit": 1 },
         { "$project": { "_id": 1 } }
     ]
     result = collection.aggregate(pipeline)
+    if len(list(result)) == 0:
+        logger.warning(f"Can't get max _id, empty or non-exists collection.")
+        return None
     doc = result.next()
     max_id = doc["_id"]
     return max_id
