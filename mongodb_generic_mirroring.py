@@ -2,6 +2,7 @@ import os
 import logging
 from threading import Thread
 import pymongo
+from pymongo.errors import ServerSelectionTimeoutError
 from dotenv import load_dotenv
 import json
 
@@ -14,6 +15,7 @@ def mirror():
     load_dotenv()
     log_level = os.getenv("LOG_LEVEL", "INFO")
     logging.basicConfig(level=log_level)
+    logger = logging.getLogger(__name__)
     if (
         not os.getenv("MONGO_CONN_STR")
         or not os.getenv("MONGO_DB_NAME")
@@ -29,8 +31,9 @@ def mirror():
 
     mongodb_coll_name = os.getenv("MONGO_COLLECTION")
     collection_list = []
+    all_collections = __get_all_collections()
     if mongodb_coll_name == "all":
-        collection_list = __get_all_collections()
+        collection_list = all_collections
     elif mongodb_coll_name.startswith("["):
         collection_list = json.loads(mongodb_coll_name)
     elif isinstance(mongodb_coll_name, str):
@@ -43,6 +46,12 @@ def mirror():
         )
 
     # threads: list[Thread] = []
+    
+    # remove non-exists collections
+    removed_collections = []
+    collection_list = [item for item in collection_list if item in all_collections or removed_collections.append(item) is None]
+    for non_exists_collection in removed_collections:
+        logger.warning(f"removed non-exists collection {non_exists_collection}")
 
     for collection_name in collection_list:
         
@@ -70,9 +79,16 @@ def mirror():
 
 def __get_all_collections() -> list[str]:
     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
-    db = client[os.getenv("MONGO_DB_NAME")]
-    return db.list_collection_names()
-
+    # check database existence
+    db_name = os.getenv("MONGO_DB_NAME")
+    try:
+        all_db_names = client.list_database_names()
+        if db_name not in all_db_names:
+            raise ValueError(f"Database name provided do not exists: {db_name}")
+        db = client[db_name]
+        return db.list_collection_names()
+    except ServerSelectionTimeoutError:
+        raise ValueError("Can not connect to MongoDB with the provided MONGO_CONN_STR.")
 
 if __name__ == "__main__":
     mirror()
