@@ -116,6 +116,10 @@ def init_sync(collection_name: str):
             break
         
         raw_last_id = batch_df["_id"].iloc[-1]
+        first_id = batch_df["_id"][0]
+        logger.info("starting a new batch.")
+        logger.info(f"first _id of this batch: {first_id}")
+        logger.info(f"last _id of this batch: {raw_last_id}")
         
         # process df according to internal schema
         schema_utils.process_dataframe(collection_name, batch_df)
@@ -176,9 +180,13 @@ def __get_max_id(collection: Collection, logger: logging.Logger):
         { "$project": { "_id": 1 } }
     ]
     result = collection.aggregate(pipeline)
-    if len(list(result)) == 0:
+    # if len(list(result)) == 0:
+    #     logger.warning(f"Can't get max _id, empty or non-exists collection.")
+    #     return None
+    try:
+        doc = result.next()    
+        max_id = doc["_id"]
+        return max_id
+    except StopIteration:
         logger.warning(f"Can't get max _id, empty or non-exists collection.")
         return None
-    doc = result.next()
-    max_id = doc["_id"]
-    return max_id
