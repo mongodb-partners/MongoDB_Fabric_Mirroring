@@ -15,6 +15,15 @@ def mirror():
     load_dotenv()
     log_level = os.getenv("LOG_LEVEL", "INFO")
     logging.basicConfig(level=log_level)
+    root_logger = logging.getLogger()
+    logging_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    file_handler = logging.FileHandler("mirroring.log")
+    file_handler.setFormatter(logging_formatter)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging_formatter)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
     logger = logging.getLogger(__name__)
     if (
         not os.getenv("MONGO_CONN_STR")
