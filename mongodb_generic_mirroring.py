@@ -13,17 +13,15 @@ from schema_utils import init_table_schema
 
 def mirror():
     load_dotenv()
-    log_level = os.getenv("LOG_LEVEL", "INFO")
-    logging.basicConfig(level=log_level)
+    log_level = logging.getLevelNamesMapping().get(os.getenv("LOG_LEVEL"), logging.INFO)
+    log_format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    logging.basicConfig(level=log_level, format=log_format_str)
     root_logger = logging.getLogger()
-    logging_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logging_formatter = logging.Formatter(log_format_str)
     file_handler = logging.FileHandler("mirroring.log")
     file_handler.setFormatter(logging_formatter)
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(logging_formatter)
     root_logger.addHandler(file_handler)
-    root_logger.addHandler(console_handler)
-    
+
     logger = logging.getLogger(__name__)
     if (
         not os.getenv("MONGO_CONN_STR")
@@ -55,17 +53,21 @@ def mirror():
         )
 
     # threads: list[Thread] = []
-    
+
     # remove non-exists collections
     removed_collections = []
-    collection_list = [item for item in collection_list if item in all_collections or removed_collections.append(item) is None]
+    collection_list = [
+        item
+        for item in collection_list
+        if item in all_collections or removed_collections.append(item) is None
+    ]
     for non_exists_collection in removed_collections:
         logger.warning(f"removed non-exists collection {non_exists_collection}")
 
     for collection_name in collection_list:
-        
+
         init_table_schema(collection_name)
-        
+
         Thread(target=listening, args=(collection_name,)).start()
         # listener_thread = Thread(target=listening, args=(collection_name,))
         # listener_thread.start()
@@ -76,7 +78,6 @@ def mirror():
         # init_thread = Thread(target=init_sync, args=(collection_name,))
         # init_thread.start()
         # threads.append(init_thread)
-
 
     # for thread in threads:
     #     thread.join()
@@ -98,6 +99,7 @@ def __get_all_collections() -> list[str]:
         return db.list_collection_names()
     except ServerSelectionTimeoutError:
         raise ValueError("Can not connect to MongoDB with the provided MONGO_CONN_STR.")
+
 
 if __name__ == "__main__":
     mirror()

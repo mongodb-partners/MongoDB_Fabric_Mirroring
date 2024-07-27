@@ -4,6 +4,9 @@ import requests
 import json
 import logging
 
+import utils
+import constants
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,3 +106,40 @@ def __patch_file(access_token, file_path, lz_url, table_name):
         file_contents = file.read()
         response = requests.patch(token_url, data=file_contents, headers=token_headers)
     logger.debug(response)
+
+
+def get_file_from_lz(table_name, file_name):
+    logger.info(
+        f"trying to get file from lz. table_name={table_name}, file_name={file_name}"
+    )
+    access_token = __get_access_token(
+        os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID")
+    )
+    token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
+    url = os.getenv("LZ_URL") + table_name + "/" + file_name
+    response = requests.get(url, headers=token_headers)
+    response_status_code = response.status_code
+    if response_status_code != 200:
+        logger.warning(
+            f"failed to get file from Landing Zone. Server responded with code {response_status_code}"
+        )
+        return None
+    local_file_path = os.path.join(utils.get_table_dir(table_name), file_name)
+    with open(local_file_path, "wb") as local_file:
+        for chunk in response.iter_content():
+            local_file.write(chunk)
+    return response_status_code
+
+
+def delete_file_from_lz(table_name, file_name):
+    logger.info(
+        f"trying to delete file from lz. table_name={table_name}, file_name={file_name}"
+    )
+    access_token = __get_access_token(
+        os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID")
+    )
+    token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
+    url = os.getenv("LZ_URL") + table_name + "/" + file_name
+    response = requests.delete(url, headers=token_headers)
+    logger.debug(f"delete response: {response}")
+    return response.status_code if response.status_code == 200 else None

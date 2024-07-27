@@ -15,6 +15,7 @@ from constants import (
     COLUMN_RENAMING_FILE_NAME,
 )
 import schemas
+from file_utils import FileType, read_from_file
 
 
 logger = logging.getLogger(f"{__name__}")
@@ -44,7 +45,7 @@ def to_numpy_int64(obj) -> np.int64:
         if isinstance(obj, list) or isinstance(obj, dict):
             raise ValueError
         return np.int64(obj)
-    
+
     return _converter_template(obj, "numpy.int64", raw_to_numpy_int64)
 
 
@@ -56,9 +57,8 @@ def to_numpy_bool(obj) -> np.bool_:
             return True
         else:
             return None
-    return _converter_template(
-        obj, "numpy.bool_", raw_to_numpy_bool, None
-    )
+
+    return _converter_template(obj, "numpy.bool_", raw_to_numpy_bool, None)
 
 
 def to_numpy_float64(obj) -> np.float64:
@@ -102,7 +102,7 @@ def init_column_schema(column_dtype, first_item) -> dict:
     if item_type == NoneType:
         item_type = str
         column_dtype = "object"
-    
+
     if not column_dtype:
         column_dtype = COLUMN_DTYPE_CONVERSION_MAP.get(column_dtype, column_dtype)
     schema_of_this_column[DTYPE_KEY] = column_dtype
@@ -113,12 +113,13 @@ def init_column_schema(column_dtype, first_item) -> dict:
 def process_column_name(column_name: str) -> str:
     return str(column_name).replace(" ", "_")[:128]
 
+
 def _get_first_item(df: pd.DataFrame, column_name: str):
     """
     Get the first non-null item from given DataFrame column.
-    This is useful when reading data in init sync, and a few (or even just one) 
-    documents have an extra column, making most items of this column to be null. 
-    In this case we really want to find the actual non-null item, and derive 
+    This is useful when reading data in init sync, and a few (or even just one)
+    documents have an extra column, making most items of this column to be null.
+    In this case we really want to find the actual non-null item, and derive
     data type based on it.
 
     Args:
@@ -128,29 +129,34 @@ def _get_first_item(df: pd.DataFrame, column_name: str):
     Returns:
         Any: the first non-null item in given DataFrame column
     """
-    first_valid_index = df[column_name].first_valid_index() or 0 # in case of first_valid_index() return None, let it be zero
+    first_valid_index = (
+        df[column_name].first_valid_index() or 0
+    )  # in case of first_valid_index() return None, let it be zero
     first_valid_item = df[column_name][first_valid_index]
-    logger.info(f"get first item {first_valid_item} of type {type(first_valid_item)} in column {column_name}")
+    logger.info(
+        f"get first item {first_valid_item} of type {type(first_valid_item)} in column {column_name}"
+    )
     return first_valid_item
+
 
 def init_table_schema(table_name: str):
     # determine if the internal schema file exist
     table_dir = get_table_dir(table_name)
     schema_file_path = os.path.join(table_dir, INTERNAL_SCHEMA_FILE_NAME)
-    if os.path.exists(schema_file_path):
-        # if exists, load from file and return
-        with open(schema_file_path, "rb") as schema_file:
-            schema_of_this_table = pickle.load(schema_file)
-            logger.info(f"loaded schema of {table_name} from file")
-            schemas.init_table_schema(table_name, schema_of_this_table)
+    schema_of_this_table = read_from_file(
+        table_name, INTERNAL_SCHEMA_FILE_NAME, FileType.PICKLE
+    )
+    if schema_of_this_table:
+        logger.info(f"loaded schema of {table_name} from file")
+        schemas.init_table_schema(table_name, schema_of_this_table)
         # load column renaming if it exists, otherwise this table has been previously
         # initiated but no column is renamed, so we don't need to do anything
-        column_renaming_file_path = os.path.join(table_dir, COLUMN_RENAMING_FILE_NAME)
-        if os.path.exists(column_renaming_file_path):
-            with open(column_renaming_file_path, "rb") as column_renaming_file:
-                table_column_renaming = pickle.load(column_renaming_file)
-                logger.info(f"loaded column renaming of {table_name} from file")
-                schemas.init_column_renaming(table_name, table_column_renaming)
+        table_column_renaming = read_from_file(
+            table_name, COLUMN_RENAMING_FILE_NAME, FileType.PICKLE
+        )
+        if table_column_renaming:
+            logger.info(f"loaded column renaming of {table_name} from file")
+            schemas.init_column_renaming(table_name, table_column_renaming)
     else:
         # else, init schema from collection
         client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
@@ -216,7 +222,9 @@ def process_dataframe(table_name: str, df: pd.DataFrame):
                 )
             )
         logger.debug(f"current_dtype={current_dtype}")
-        logger.debug(f"schema_of_this_column[DTYPE_KEY]={schema_of_this_column[DTYPE_KEY]}")
+        logger.debug(
+            f"schema_of_this_column[DTYPE_KEY]={schema_of_this_column[DTYPE_KEY]}"
+        )
         if current_dtype != schema_of_this_column[DTYPE_KEY]:
             try:
                 logger.info(

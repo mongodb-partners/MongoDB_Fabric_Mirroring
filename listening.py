@@ -24,41 +24,45 @@ from flags import get_init_flag
 from init_sync import init_sync
 import schemas
 import schema_utils
+from file_utils import FileType, read_from_file, write_to_file
 
 
 # MAX_ROWS = 1
 TIME_THRESHOLD_IN_SEC = 600
 
+
 def listening(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
-    # logger.debug(f"conn_str={mongodb_params["conn_str"]}")
-    logger.debug(f"db_name={os.getenv("MONGO_DB_NAME")}")
+    db_name = os.getenv("MONGO_DB_NAME")
+    logger.debug(f"db_name={db_name}")
     logger.debug(f"collection={collection_name}")
     post_init_flush_done = False
-    
+
     table_dir = get_table_dir(collection_name)
-    resume_token_file_full_path = os.path.join(table_dir, DELTA_SYNC_RESUME_TOKEN_FILE_NAME)
-    resume_token = None
-    if os.path.exists(resume_token_file_full_path):
-        with open(resume_token_file_full_path, "rb") as resume_token_file:
-            resume_token = pickle.load(resume_token_file)
-            logger.info(f"interrupted incremental sync detected, continuing with resume_token={resume_token}")
-    
+    resume_token = read_from_file(
+        collection_name, DELTA_SYNC_RESUME_TOKEN_FILE_NAME, FileType.PICKLE
+    )
+    if resume_token:
+        logger.info(
+            f"interrupted incremental sync detected, continuing with resume_token={resume_token}"
+        )
+
     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
-    db = client[os.getenv("MONGO_DB_NAME")]
+    db = client[db_name]
     collection = db[collection_name]
-    cursor = collection.watch(full_document='updateLookup', resume_after=resume_token)
-    
-    
-    cache_parquet_full_path = os.path.join(table_dir, DELTA_SYNC_CACHE_PARQUET_FILE_NAME)
+    cursor = collection.watch(full_document="updateLookup", resume_after=resume_token)
+
+    cache_parquet_full_path = os.path.join(
+        table_dir, DELTA_SYNC_CACHE_PARQUET_FILE_NAME
+    )
     cached_change_count = 0
     if os.path.exists(cache_parquet_full_path):
         # cache exists, needs to restore cache count
         cached_change_count = len(pd.read_parquet(cache_parquet_full_path))
-        
+
     # start init sync after we get cursor from Change Stream
     Thread(target=init_sync, args=(collection_name,)).start()
-    
+
     logger.info(f"start listening to change stream for collection {collection_name}")
     for change in cursor:
         init_flag = get_init_flag(collection_name)
@@ -75,56 +79,62 @@ def listening(collection_name: str):
             continue
         if operationType == "delete":
             doc: dict = change["documentKey"]
-        else: # insert or update
+        else:  # insert or update
             doc: dict = change["fullDocument"]
         df = pd.DataFrame([doc])
-        
+
         # process df according to internal schema
         schema_utils.process_dataframe(collection_name, df)
-        
+
         if init_flag:
-            logger.debug(f"collection {collection_name} still initializing, use UPSERT instead of INSERT")
+            logger.debug(
+                f"collection {collection_name} still initializing, use UPSERT instead of INSERT"
+            )
             row_marker_value = CHANGE_STREAM_OPERATION_MAP_WHEN_INIT[operationType]
         else:
             row_marker_value = CHANGE_STREAM_OPERATION_MAP[operationType]
         df.insert(0, ROW_MARKER_COLUMN_NAME, [row_marker_value])
-        # logger.debug("constructed pandas DataFrame:")
-        # logger.debug(df)
-        # logger.debug("pandas DataFrame schema:")
-        # logger.debug(df.dtypes)
-        
-        # logger.debug("pandas DataFrame schema after conversion:")
-        # logger.debug(df.dtypes)
-        
+
         # INCREMENTAL SYNC ANTI-CRASH REFACTORING
         # instead of accumulating to df, accumulating directly to parquet file, like accumulation.parquet
-        df.to_parquet(cache_parquet_full_path, index=False, engine="fastparquet", append=os.path.exists(cache_parquet_full_path))
+        df.to_parquet(
+            cache_parquet_full_path,
+            index=False,
+            engine="fastparquet",
+            append=os.path.exists(cache_parquet_full_path),
+        )
         cached_change_count += 1
-        
-        # wirte _id of current change as resume token to file, after successful
-        #     write current change to cache parquet
-        resume_token = change["_id"]
-        with open(resume_token_file_full_path, "wb") as resume_token_file:
-            logger.info(f"writing resume_token into file: {resume_token}")
-            pickle.dump(resume_token, resume_token_file)
-        
+
         # Always rename chached parquet if exists
         # But, if the collection is initializing, rename cache parquet file with
         # a prefix, and do not push it to LZ
-        if (os.path.exists(cache_parquet_full_path)
-                and cached_change_count >= int(os.getenv("DELTA_SYNC_BATCH_SIZE"))
-            ):
+        if os.path.exists(cache_parquet_full_path) and cached_change_count >= int(
+            os.getenv("DELTA_SYNC_BATCH_SIZE")
+        ):
             prefix = ""
             if init_flag:
-                prefix=TEMP_PREFIX_DURING_INIT
-            parquet_full_path_filename = get_parquet_full_path_filename(collection_name, prefix=prefix)
-            logger.info(f"renaming caching parquet file to: {parquet_full_path_filename}")
+                prefix = TEMP_PREFIX_DURING_INIT
+            parquet_full_path_filename = get_parquet_full_path_filename(
+                collection_name, prefix=prefix
+            )
+            logger.info(
+                f"renaming caching parquet file to: {parquet_full_path_filename}"
+            )
             os.rename(cache_parquet_full_path, parquet_full_path_filename)
             if not init_flag:
                 push_file_to_lz(parquet_full_path_filename, collection_name)
+                # wirte _id of current change as resume token to file, after successful
+                #     push parquet to lz
+                resume_token = change["_id"]
+                logger.info(f"writing resume_token into file: {resume_token}")
+                write_to_file(
+                    resume_token,
+                    collection_name,
+                    DELTA_SYNC_RESUME_TOKEN_FILE_NAME,
+                    FileType.PICKLE,
+                )
+
             cached_change_count = 0
-            # from June-14 meeting with Vasanth Kumar:
-            # TODO: new location to update resume token
 
 
 def __post_init_flush(table_name: str, logger):
@@ -135,18 +145,22 @@ def __post_init_flush(table_name: str, logger):
     table_dir = get_table_dir(table_name)
     if not os.path.exists(table_dir):
         return
-    temp_parquet_filename_list = sorted([
-        filename
-        for filename in os.listdir(table_dir)
-        if os.path.splitext(filename)[1] == ".parquet"
-        and os.path.splitext(filename)[0].startswith(TEMP_PREFIX_DURING_INIT)
-    ])
+    temp_parquet_filename_list = sorted(
+        [
+            filename
+            for filename in os.listdir(table_dir)
+            if os.path.splitext(filename)[1] == ".parquet"
+            and os.path.splitext(filename)[0].startswith(TEMP_PREFIX_DURING_INIT)
+        ]
+    )
     for temp_parquet_filename in temp_parquet_filename_list:
         temp_parquet_full_path = os.path.join(table_dir, temp_parquet_filename)
         new_parquet_full_path = get_parquet_full_path_filename(table_name)
         logger.debug("renaming temp parquet file")
         logger.debug(f"old name: {temp_parquet_full_path}")
         logger.debug(f"new name: {new_parquet_full_path}")
-        logger.info(f"renaming parquet file from {temp_parquet_full_path} to {new_parquet_full_path}")
+        logger.info(
+            f"renaming parquet file from {temp_parquet_full_path} to {new_parquet_full_path}"
+        )
         os.rename(temp_parquet_full_path, new_parquet_full_path)
         push_file_to_lz(new_parquet_full_path, table_name)
