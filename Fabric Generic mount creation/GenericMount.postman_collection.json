@@ -1,0 +1,232 @@
+{
+	"info": {
+		"_postman_id": "9960bce8-356b-4a35-a305-89b305a7bf86",
+		"name": "GenericMount",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "27102169"
+	},
+	"item": [
+		{
+			"name": "1. Get host url",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{AADToken}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.powerbi.com/metadata/cluster",
+					"protocol": "https",
+					"host": [
+						"api",
+						"powerbi",
+						"com"
+					],
+					"path": [
+						"metadata",
+						"cluster"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "2. Create Artifact",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{AADToken}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\"artifactType\":\"MountedRelationalDatabase\",\"displayName\":\"MirroredDatabase2345\"}\r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{HostURL}}/metadata/workspaces/{{workspaceId}}/artifacts",
+					"host": [
+						"{{HostURL}}"
+					],
+					"path": [
+						"metadata",
+						"workspaces",
+						"{{workspaceId}}",
+						"artifacts"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "3. Generate Special User Token",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{AADToken}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{ \r\n    \"workspaceObjectId\": \"{{workspaceId}}\", \r\n    \"workloadType\": \"DMS\" \r\n} \r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{HostURL}}/metadata/v201606/generatemwctokenv2",
+					"host": [
+						"{{HostURL}}"
+					],
+					"path": [
+						"metadata",
+						"v201606",
+						"generatemwctokenv2"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "4. UpsertMountConfig",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "value",
+							"value": "MwcToken {{UserToken}}",
+							"type": "string"
+						},
+						{
+							"key": "key",
+							"value": "Authorization",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "x-ms-workload-resource-moniker",
+						"value": "{{workspaceId}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n  \"replicatorPayload\": \"{\\\"properties\\\":{\\\"source\\\":{\\\"type\\\":\\\"GenericMirror\\\"},\\\"target\\\":{\\\"type\\\":\\\"MountedRelationalDatabase\\\",\\\"typeProperties\\\":{\\\"format\\\":\\\"Delta\\\"}}}}\",\r\n  \"extendedProperties\": {\r\n    \"targetStatus\": \"Running\",\r\n    \"sourceType\": \"GenericMirror\"\r\n  }\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{mountConfigURL}}/webapi/capacities/{{capacityId}}/workloads/DMS/DmsService/automatic/datamarts/{{mirrorArtifactId}}/upsertmountingconfig",
+					"host": [
+						"{{mountConfigURL}}"
+					],
+					"path": [
+						"webapi",
+						"capacities",
+						"{{capacityId}}",
+						"workloads",
+						"DMS",
+						"DmsService",
+						"automatic",
+						"datamarts",
+						"{{mirrorArtifactId}}",
+						"upsertmountingconfig"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "AADToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "UserToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "HostURL",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "workspaceId",
+			"value": ""
+		},
+		{
+			"key": "mirrorArtifactId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "mountConfigURL",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "capacityId",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
