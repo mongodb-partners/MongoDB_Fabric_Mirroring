@@ -139,8 +139,12 @@ def init_sync(collection_name: str):
             metadata_json_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), METADATA_FILE_NAME
             )
+            #Diana 143
+            logger.info("writing metadata file to LZ")
             push_file_to_lz(metadata_json_path, collection_name)
         push_start_time = time.time()
+        #Diana 147
+        logger.info("writing parquet file to LZ")
         push_file_to_lz(parquet_full_path_filename, collection_name)
         push_end_time = time.time()
         if enable_perf_timer:
