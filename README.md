@@ -28,8 +28,18 @@ Step 2 is basically executing the ARM template by clicking the `Deploy to Azure`
 ## Pre-requisites for Step2:
 1. Keep the MongoDB `Connection uri`, `Database name` and `Collection name` handy for input in ARM template.
 2. Install Azure Storage explorer. Connect to Azure Storage by selecting `Attach to a resource` -> `ADLS Gen2 container or directory` -> `Sign in using Oauth`. Select your Azure login id and on next screen give the `Blob container or directory URL` as `https://onelake.blob.fabric.microsoft.com/<workspace name in Fabric>`. Once connected you can see the Workspace under `Storage Accounts` -> `(Attached Containers)` -> `Blob Containers`. Double click your Workspace, you should see the MirrorDB folder. In your Mirror DB folder -> `Files` -> `LandingZone` (create if not exists already) -> right click and choose `Copy URL` -> `With DFS Endpoint`
-3. For authentication, its through Service Principal and so we need to go to `App Registrations` in Azure portal and register a new app. Also create a new secret in the App. Get the Tenant Id, App Id and the value of the secret for input in ARM template.
-4. Go to Fabric Workspace -> Manage Access -> Type in the new App name -> Select the App and give it admin permissions to write to this workspace.
+
+![image](https://github.com/user-attachments/assets/4c2ec669-4164-475a-b56c-b0bd2cadf940)
+
+4. For authentication, its through Service Principal and so we need to go to `App Registrations` in Azure portal and register a new app. Also create a new secret in the App. Get the Tenant Id, App Id and the value of the secret for input in ARM template. the secret value should be copied when being created, you will not be able to see it later.
+
+![image](https://github.com/user-attachments/assets/8cb68999-9784-4f46-bbd3-4eec16e29eae)
+
+![image](https://github.com/user-attachments/assets/61bc393b-e3ed-41cb-bd37-5d366441f19b)
+
+6. Go to Fabric Workspace -> Manage Access -> Type in the new App name -> Select the App and give it admin permissions to write to this workspace.
+   
+![image](https://github.com/user-attachments/assets/efc6b49a-33be-4257-a9db-d4024847a94a)
 
 Refer to `.env_example` for the parameters needed. 
 
