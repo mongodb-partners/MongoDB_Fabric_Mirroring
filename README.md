@@ -20,7 +20,7 @@ To create the mount for replication, we just need to run the `Fabric Generic mou
 
 ## Output Verification
 1. The terminal prints will indicate the execution of 4 APIs. The 2nd API will create the Fabric mount and can verify that in Fabric.
-2. After the 4th API is run, we can check in Fabric and see that Replication Status is `Running`.
+2. After the 4th API is run, we can check in Fabric and see that Replication Status is `Running`. There is a delay set between 3rd API and 4th to give time for the artifact to be created. If it fails with "Bad Request Error", increase the delay and try again.
 
 # Step2: Start Mirroring
 Step 2 is basically executing the ARM template by clicking the `Deploy to Azure` button. But, we need to get the parameters to be provided to the ARM template ready beforehand.
@@ -37,7 +37,7 @@ Step 2 is basically executing the ARM template by clicking the `Deploy to Azure`
 
 ![image](https://github.com/user-attachments/assets/61bc393b-e3ed-41cb-bd37-5d366441f19b)
 
-6. Go to Fabric Workspace -> Manage Access -> Type in the new App name -> Select the App and give it admin permissions to write to this workspace.
+6. Go to Fabric Workspace -> Manage Access -> Type in the new App name -> Select the App and give it `admin` permissions to write to this workspace. Select `Add people or groups` if you donot already have the App in your list.
    
 ![image](https://github.com/user-attachments/assets/efc6b49a-33be-4257-a9db-d4024847a94a)
 
