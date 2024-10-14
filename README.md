@@ -1,10 +1,10 @@
 # MongoDB to Microsoft Fabric Mirroring
 
-This project is for the L1 Connector which can replicate MongoDB Atlas Data with Microsoft Fabric One Lake in real time.
+This project is for the L1 Connector which can replicate MongoDB Atlas Data with Microsoft Fabric One Lake in real time.\
 It requires two main steps:
 1. Creating the Fabric mount point also called Landing Zone or MirrorDB
-2. Deploy Code to run in an App service using `Deploy to Azure` button below or to a VM by cloning the Git repo and running the `app.py` script.
-One started, app will continously keep track of the changes in MongoDB Atlas and replicate them to the MirrorDB created in Step 1.
+2. Deploy Code to run in an App service using `Deploy to Azure` button below or to a VM by cloning the Git repo and running the `app.py` script.\
+Once started, app will continously keep track of the changes in MongoDB Atlas and replicate them to the MirrorDB created in Step 1.
 
 # Step1: Fabric Mount Generation
 To create the mount for replication, we just need to run the `Fabric Generic mount creation/MirrorDB_creation.py` code.
@@ -16,11 +16,11 @@ To create the mount for replication, we just need to run the `Fabric Generic mou
 
 ## Step1 Execution
 1. Make sure all environment variables are set in the `.env` file
-1. To Start Fabric MirrorDB creation - simply run `Fabric Generic mount creation/MirrorDB_creation.py`
+1. To Start Fabric MirrorDB creation, simply run `Fabric Generic mount creation/MirrorDB_creation.py`
 
 ## Output Verification
 1. The terminal prints will indicate the execution of 4 APIs. The 2nd API will create the Fabric mount and can verify that in Fabric.
-2. After the 4th API is run, we can check in Fabric and see that Replication Status is `Running`. There is a delay set between 3rd API and 4th to give time for the artifact to be created. If it fails with "Bad Request Error", increase the delay and try again.
+2. After the 4th API is run, we can check in Fabric and see that Replication Status is `Running`. There is a delay set between 3rd API and 4th to give time for the artifact to be created. If it fails with HTTPError= 400 and "Bad Request for url", increase the delay and try again.
 
 # Step2: Start Mirroring
 Step 2 is basically executing the ARM template by clicking the `Deploy to Azure` button. But, we need to get the parameters to be provided to the ARM template ready beforehand.
