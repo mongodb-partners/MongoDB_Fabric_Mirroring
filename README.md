@@ -3,7 +3,7 @@
 This project is for the L1 Connector which can replicate MongoDB Atlas Data with Microsoft Fabric One Lake in real time.
 It requires two main steps:
 1. Creating the Fabric mount point also called Landing Zone or MirrorDB
-2. Deploy Code to run in an App service using `Deploy to Azure` button below or to a VM by cloning the Git repo and running the `app.py` script
+2. Deploy Code to run in an App service using `Deploy to Azure` button below or to a VM by cloning the Git repo and running the `app.py` script.
 One started, app will continously keep track of the changes in MongoDB Atlas and replicate them to the MirrorDB created in Step 1.
 
 # Step1: Fabric Mount Generation
