@@ -1,6 +1,6 @@
 # MongoDB to Microsoft Fabric Mirroring
 
-This project is for the L1 Connector which can replicate MongoDB Atlas Data with Microsoft Fabric One Lake in real time.\
+This project is for enabling mirroring which can replicate MongoDB Atlas Data with Microsoft Fabric One Lake in near real time.\
 It requires two main steps:
 1. Creating the Fabric mount point also called Landing Zone or MirrorDB
 2. Deploy Code to run in an App service using `Deploy to Azure` button below or to a VM by cloning the Git repo and running the `app.py` script.\
@@ -12,22 +12,23 @@ To create the mount for replication, we just need to run the `Fabric Generic mou
 ## Pre-requisites for Step1:
 1. Rename `Fabric Generic mount creation/.env_example_mount` to `Fabric Generic mount creation/.env`
 2. To get the WORKSPACE_ID, Open the Fabric UI, select the Workspace where you want the Mirror DB to be created. The Workspace ID is part of the url. For e.g : In the url "https://app.fabric.microsoft.com/groups/daacbe4d-4fd8-4cbd-bc0b-b211356b30c5/list?experience=power-bi", `daacbe4d-4fd8-4cbd-bc0b-b211356b30c5` is the Workspace Id.
-3. Open Developer Tools, check Network Activity, Select "Disable Cache", get any API (endpoint api or any other api). Copy the Bearer Token from the Request Header. This is also explained in the `Fabric Generic mount creation/Generic Mount Creation Steps.pdf` file.
+3. Open Developer Tools, check Network Activity, Select "Disable Cache", get any API (endpoint api or workspace api or any other api). Copy the Bearer Token from the Request Header. This is also explained in the `Fabric Generic mount creation/Generic Mount Creation Steps.pdf` file.
 
 ## Step1 Execution
 1. Make sure all environment variables are set in the `.env` file
 1. To Start Fabric MirrorDB creation, simply run `Fabric Generic mount creation/MirrorDB_creation.py`
 
 ## Output Verification
-1. The terminal prints will indicate the execution of 4 APIs. The 2nd API will create the Fabric mount and can verify that in Fabric.
-2. After the 4th API is run, we can check in Fabric and see that Replication Status is `Running`. There is a delay set between 3rd API and 4th to give time for the artifact to be created. If it fails with HTTPError= 400 and "Bad Request for url", increase the delay and try again.
+1. The terminal prints will indicate the execution of 4 APIs. The 2nd API will create the Fabric mount and we can verify that in Fabric.
+2. After the 4th API is run, we can check in Fabric and see that Replication Status is `Running`. 
 
 # Step2: Start Mirroring
 Step 2 is basically executing the ARM template by clicking the `Deploy to Azure` button. But, we need to get the parameters to be provided to the ARM template ready beforehand.
 
 ## Pre-requisites for Step2:
 1. Keep the MongoDB `Connection uri`, `Database name` and `Collection name` handy for input in ARM template.
-2. Install Azure Storage explorer. Connect to Azure Storage by selecting `Attach to a resource` -> `ADLS Gen2 container or directory` -> `Sign in using Oauth`. Select your Azure login id and on next screen give the `Blob container or directory URL` as `https://onelake.blob.fabric.microsoft.com/<workspace name in Fabric>`. Once connected you can see the Workspace under `Storage Accounts` -> `(Attached Containers)` -> `Blob Containers`. Double click your Workspace, you should see the MirrorDB folder. In your Mirror DB folder -> `Files` -> `LandingZone` (create if not exists already) -> right click and choose `Copy URL` -> `With DFS Endpoint`
+Note you can give multiple collections as an array `[col1, col2]` or can give `all` for all collections in a Database.
+2. Install Azure Storage explorer. Connect to Azure Storage by selecting `Attach to a resource` -> `ADLS Gen2 container or directory` -> `Sign in using Oauth`. Select your Azure login id and on next screen give the `Blob container or directory URL` as `https://onelake.blob.fabric.microsoft.com/<workspace name in Fabric>`. Once connected you can see the Workspace under `Storage Accounts` -> `(Attached Containers)` -> `Blob Containers`. Double click your Workspace, you should see the MirrorDB folder. In your MirrorDB folder create a new folder called `LandingZone` within `Files` folder. Then right click `LandingZone` and choose `Copy URL` -> `With DFS Endpoint`
 
 ![image](https://github.com/user-attachments/assets/4c2ec669-4164-475a-b56c-b0bd2cadf940)
 
