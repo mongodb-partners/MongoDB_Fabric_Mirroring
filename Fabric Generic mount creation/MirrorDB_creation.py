@@ -5,7 +5,9 @@ import requests, json, time
 
 # In this script:
 # 1. The `get_host_url` function calls the first API to get the host URL.
-# 2. The `create_artifact` function calls the second API, passing the [`capacityId`](command:_github.copilot.openSymbolFromReferences?%5B%22%22%2C%5B%7B%22uri%22%3A%7B%22scheme%22%3A%22file%22%2C%22authority%22%3A%22%22%2C%22path%22%3A%22%2FUsers%2Fdianaannie.jenosh%2FWork%2FFabric%20Generic%20mount%20creation%2FGenericMount.postman_collection.json%22%2C%22query%22%3A%22%22%2C%22fragment%22%3A%22%22%7D%2C%22pos%22%3A%7B%22line%22%3A226%2C%22character%22%3A11%7D%7D%5D%2C%22a9ea234a-026e-4b19-9d3f-056ed17829b4%22%5D "Go to definition") obtained from the first API's response.
+# 2. The `create_artifact` function calls the second API, passing the host URL to create the mirrorDB artifact.
+# 3. The 'create_user_token' function calls the third API, passing the host URL and workspace ID to create the user token.
+# 4. The 'upsert_mount_config' function calls the fourth API, passing the user token, target uri host, capacity object id, object id and workspace id to start mirroring.
 # 3. The `main` function orchestrates the calls and prints the responses.
 
 # Load environment variables from .env file
@@ -20,7 +22,6 @@ print("AAD Token:", aad_token)
 print("Workspace ID:", workspace_id)
 print("Mirror DB Name:", mirror_db_name)
 
-# Make sure to replace `{{AADToken}}` with your actual token and update the endpoint in the `create_artifact` function with the correct URL.
 # Define the base URL and headers
 base_url = "https://api.powerbi.com"
 headers = {
@@ -54,6 +55,39 @@ def create_artifact(backend_url):
     objectId = response_json.get('objectId')
     return objectId
 
+# Check the status of the mirrorDB artifact creation
+def check_create_artifact(backend_url):
+    url = f"{backend_url}/metadata/workspaces/{workspace_id}/artifacts" 
+    response = requests.get(url, headers=headers) 
+    response.raise_for_status() 
+    response_json = response.json()
+
+    provision_status = None
+# Loop through the response JSON to find the mirrorDB artifact and extract the provisioningStatus    
+    if isinstance(response_json, list):
+       for item in response_json:
+            display_name = item.get('displayName')
+            print(f"Display name of mirroDB is: {display_name}")
+            if display_name == mirror_db_name:
+                print("Found the mirrorDB artifact")
+                extended_properties = item.get('extendedProperties', {})
+                print(f">>>extended properties>>>: {extended_properties}")
+                if extended_properties is not None:
+                    warehouse_properties_str = extended_properties.get('WarehouseProperties', '{}')
+                    print(f">>>warehouse properties_str>>>: {warehouse_properties_str}")
+                # Parse the WarehouseProperties JSON string into a dictionary
+                    warehouse_properties = json.loads(warehouse_properties_str)
+                    print(f">>>warehouse properties_dict>>>: {warehouse_properties}")
+                # Get the provisioningStatus from the parsed dictionary
+                    provision_status = warehouse_properties.get('provisioningStatus')
+                    print(f">>>Provision Status>>>: {provision_status}")
+                    break  # Exit the loop once the artifact is found
+                else:
+                    print("extendedProperties is None for item:", item)
+    else:
+        print("Response JSON is not a list.")
+    return provision_status
+
 # Function to create user token
 def create_user_token(backend_url, workspace_id):
     url = f"{backend_url}metadata/v201606/generatemwctokenv2" 
@@ -77,7 +111,7 @@ def upsert_mount_config(usertoken, target_uri_host, capacity_obj_id, objectId, w
     # Create the replicatorPayload as a JSON string
     replicator_payload = json.dumps({
         'properties': {
-            'source': {'type': 'GenericMirror'},
+            'source': {'type': 'GenericMirror','typeProperties': {}},
             'target': {'type': 'MountedRelationalDatabase', 'typeProperties': {'format': 'Delta'}}
         }
     })
@@ -109,19 +143,31 @@ def main():
     objectId = create_artifact(backend_url)
     print(">>>>Step 2: Create Artifact Response:", objectId)
 
-# Step 3: Create User token
-    usertoken, target_uri_host, capacity_obj_id = create_user_token(backend_url, workspace_id)
-    print(">>>>Step3: Create User Token Response usertoken, target uri n capacityId:", usertoken, target_uri_host, capacity_obj_id)
+# Step 2: Check Create Artifact Status
+    counter = 0
+    provision_status = None
+    while provision_status != "success" and counter < 10:
+      provision_status = check_create_artifact(backend_url)
+      print(">>>>Step 2: Status of Create Artifact Response is:", provision_status)
+      print(">>>>Step 2: Counter of Create Artifact status check is:", counter)
+      counter += 1
+      time.sleep(10)  # Delay for 10 seconds
 
-# Step 4: Add delay before making the 4th API call
-    print(">>>>Waiting for 2 minutes before making the 4th API call...")
-    time.sleep(120)  # Delay for 1 minute (60 seconds)
+    if provision_status == "success":
+      print("Artifact creation successful.")
+    else:
+      print("Artifact creation failed after 10 attempts.")   
+
+# Step 3: Create User token
+    if provision_status == "success":
+      usertoken, target_uri_host, capacity_obj_id = create_user_token(backend_url, workspace_id)
+      print(">>>>Step3: Create User Token Response usertoken, target uri n capacityId:", usertoken, target_uri_host, capacity_obj_id)
 
 # Step 4: Upsert mount config- start replication
-    final_response = upsert_mount_config(usertoken, target_uri_host, capacity_obj_id, objectId, workspace_id)
-    print(">>>>Step4: Upsert mount config Response:", final_response)
-
-    print(">>>>Done ! Mirroring Started For:", mirror_db_name)
+    if provision_status == "success":
+      final_response = upsert_mount_config(usertoken, target_uri_host, capacity_obj_id, objectId, workspace_id)
+      print(">>>>Step4: Upsert mount config Response:", final_response)
+      print(">>>>Done ! Mirroring Started For:", mirror_db_name)
 
 if __name__ == "__main__":
     main()
