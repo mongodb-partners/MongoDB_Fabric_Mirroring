@@ -1,3 +1,4 @@
+import logging.handlers
 import os
 import logging
 from threading import Thread
@@ -13,12 +14,20 @@ from schema_utils import init_table_schema
 
 def mirror():
     load_dotenv()
-    log_level = logging.getLevelNamesMapping().get(os.getenv("LOG_LEVEL"), logging.INFO)
+    log_format_os = os.getenv("APP_LOG_LEVEL")
+    # print(f"log_level before getlevels =={log_format_os}")
+    #log_level = logging.getLevelNamesMapping().get(log_format_os, logging.INFO)
+    log_level = logging._nameToLevel.get(log_format_os, logging.INFO)
+    #diana-added to check why log level not set
+    print(f"log_level set ={log_level}")
     log_format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     logging.basicConfig(level=log_level, format=log_format_str)
     root_logger = logging.getLogger()
     logging_formatter = logging.Formatter(log_format_str)
-    file_handler = logging.FileHandler("mirroring.log")
+    #diana -changed to rotate logs
+    #file_handler = logging.FileHandler("mirroring.log")
+    file_handler = logging.handlers.RotatingFileHandler('mirroring.log', maxBytes=50*1024*1024, backupCount=5)
+
     file_handler.setFormatter(logging_formatter)
     root_logger.addHandler(file_handler)
 

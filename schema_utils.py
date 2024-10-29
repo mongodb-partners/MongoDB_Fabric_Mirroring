@@ -136,7 +136,7 @@ def _get_first_item(df: pd.DataFrame, column_name: str):
         df[column_name].first_valid_index() or 0
     )  # in case of first_valid_index() return None, let it be zero
     first_valid_item = df[column_name][first_valid_index]
-    logger.info(
+    logger.debug(
         f"get first item {first_valid_item} of type {type(first_valid_item)} in column {column_name}"
     )
     return first_valid_item
@@ -216,7 +216,7 @@ def process_dataframe(table_name: str, df: pd.DataFrame):
         # schema_of_this_colum should always exists at this point
         # existing column or new column with schema appended, process accroding to schema_of_this_colum
         if current_item_type != schema_of_this_column[TYPE_KEY]:
-            logger.info(
+            logger.debug(
                 f"different item type detected: current_item_type={current_item_type}, item type from schema={schema_of_this_column[TYPE_KEY]}"
             )
             df[col_name] = df[col_name].apply(
@@ -230,7 +230,7 @@ def process_dataframe(table_name: str, df: pd.DataFrame):
         )
         if current_dtype != schema_of_this_column[DTYPE_KEY]:
             try:
-                logger.info(
+                logger.debug(
                     f"different column dtype detected: current_dtype={current_dtype}, item type from schema={schema_of_this_column[DTYPE_KEY]}"
                 )
                 df[col_name] = df[col_name].astype(schema_of_this_column[DTYPE_KEY])
