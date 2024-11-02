@@ -28,8 +28,10 @@ from file_utils import FileType, read_from_file, write_to_file
 
 
 # MAX_ROWS = 1
-TIME_THRESHOLD_IN_SEC = 600
-
+# Time is an env variable now
+#TIME_THRESHOLD_IN_SEC = 300
+time_threshold_in_sec = float(os.getenv("TIME_THRESHOLD_IN_SEC"))
+#print(f"The type of time_threshold_in_sec is: {type(time_threshold_in_sec)}")
 
 def listening(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
@@ -52,14 +54,10 @@ def listening(collection_name: str):
     collection = db[collection_name]
     cursor = collection.watch(full_document="updateLookup", resume_after=resume_token)
 
-    cache_parquet_full_path = os.path.join(
-        table_dir, DELTA_SYNC_CACHE_PARQUET_FILE_NAME
-    )
-    cached_change_count = 0
-    if os.path.exists(cache_parquet_full_path):
-        # cache exists, needs to restore cache count
-        cached_change_count = len(pd.read_parquet(cache_parquet_full_path))
+    # use df  - enables variable schemas
+    # and consistent as resume_token is updated when file is pushed to LZ
 
+    accumulative_df: pd.DataFrame = None
     # start init sync after we get cursor from Change Stream
     Thread(target=init_sync, args=(collection_name,)).start()
 
@@ -95,33 +93,50 @@ def listening(collection_name: str):
             row_marker_value = CHANGE_STREAM_OPERATION_MAP[operationType]
         df.insert(0, ROW_MARKER_COLUMN_NAME, [row_marker_value])
 
-        # INCREMENTAL SYNC ANTI-CRASH REFACTORING
-        # instead of accumulating to df, accumulating directly to parquet file, like accumulation.parquet
-        df.to_parquet(
-            cache_parquet_full_path,
-            index=False,
-            engine="fastparquet",
-            append=os.path.exists(cache_parquet_full_path),
-        )
-        cached_change_count += 1
 
-        # Always rename chached parquet if exists
-        # But, if the collection is initializing, rename cache parquet file with
-        # a prefix, and do not push it to LZ
-        if os.path.exists(cache_parquet_full_path) and cached_change_count >= int(
-            os.getenv("DELTA_SYNC_BATCH_SIZE")
-        ):
-            prefix = ""
-            if init_flag:
+        # merge the df to accumulative_df till batch size reached
+        if accumulative_df is not None:
+            accumulative_df = pd.concat([accumulative_df, df], ignore_index=True)
+            logger.info("concat accumulative_df result:")
+            logger.info(accumulative_df)
+        else:
+            logger.info("df created")
+            accumulative_df = df
+            last_sync_time: float = time.time()
+            logger.info(f"last_sync_time when first record added: {last_sync_time}")
+
+
+        if init_flag:
+            if (accumulative_df is not None
+                and (
+                      (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
+                )
+            ):
                 prefix = TEMP_PREFIX_DURING_INIT
-            parquet_full_path_filename = get_parquet_full_path_filename(
+                parquet_full_path_filename = get_parquet_full_path_filename(
                 collection_name, prefix=prefix
-            )
-            logger.info(
-                f"renaming caching parquet file to: {parquet_full_path_filename}"
-            )
-            os.rename(cache_parquet_full_path, parquet_full_path_filename)
-            if not init_flag:
+                )
+  
+                logger.info(f"writing parquet file: {parquet_full_path_filename}")
+                accumulative_df.to_parquet(parquet_full_path_filename)
+                accumulative_df = None
+
+        if not init_flag:
+            if (accumulative_df is not None
+                and (
+                      (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
+#                      or (time.time() - last_sync_time >= TIME_THRESHOLD_IN_SEC)
+                       or ((time.time() - last_sync_time) >= time_threshold_in_sec)
+                )
+            ):
+                prefix = ""
+                parquet_full_path_filename = get_parquet_full_path_filename(
+                collection_name, prefix=prefix
+               )
+                logger.info(f"writing parquet file: {parquet_full_path_filename}")
+                accumulative_df.to_parquet(parquet_full_path_filename)
+                accumulative_df = None
+
                 push_file_to_lz(parquet_full_path_filename, collection_name)
                 # wirte _id of current change as resume token to file, after successful
                 #     push parquet to lz
@@ -133,8 +148,6 @@ def listening(collection_name: str):
                     DELTA_SYNC_RESUME_TOKEN_FILE_NAME,
                     FileType.PICKLE,
                 )
-
-            cached_change_count = 0
 
 
 def __post_init_flush(table_name: str, logger):
