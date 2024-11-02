@@ -12,38 +12,21 @@
         "SKU": {
             "defaultValue": "F1",
             "type": "String",
+            "metadata": {
+                "description": "The SKU of App Service Plan (e.g B1, B2, POV3, P2MV3, I3MV2, I6V2 etc.)."
+            }
+        },
+        "ApplicationLogLevel": {
+            "defaultValue": "INFO",
+            "type": "String",
             "allowedValues": [
-                "B1",
-                "B2",
-                "B3",
-                "D1",
-                "F1",
-                "FREE",
-                "I1",
-                "I1v2",
-                "I2",
-                "I2v2",
-                "I3",
-                "I3v2",
-                "P1V2",
-                "P1V3",
-                "P2V2",
-                "P2V3",
-                "P3V2",
-                "P3V3",
-                "PC2",
-                "PC3",
-                "PC4",
-                "S1",
-                "S2",
-                "S3",
-                "SHARED",
-                "WS1",
-                "WS2",
-                "WS3"
+                "DEBUG",
+                "INFO",
+                "WARNING",
+                "ERROR"
             ],
             "metadata": {
-                "description": "The SKU of App Service Plan."
+                "description": "The Level of logging for the application."
             }
         },
         "MongodbConnectionString": {
@@ -96,13 +79,19 @@
             }
         },
         "IncrementalSyncBatchSize": {
-            "defaultValue": "10000",
+            "defaultValue": "1000",
             "type": "String",
             "metadata": {
                 "description": "Batch size (rows) used for incremental sync"
             }
-        }
-        
+        },
+        "IncrementalSyncMaxTimeInterval": {
+            "defaultValue": "180",
+            "type": "String",
+            "metadata": {
+                "description": "Time interval (in secs), incremental sync waits before replicating accumulated changes when next event occurs"
+            }
+        }    
     },
     "variables": {
         "appServicePlanPortalName": "[format('AppServicePlan-{0}', parameters('webAppName'))]"
@@ -150,7 +139,7 @@
                 "[resourceId('Microsoft.Web/sites', parameters('webAppName'))]"
             ],
             "properties": {
-                "LOG_LEVEL": "INFO",
+                "APP_LOG_LEVEL": "[parameters('ApplicationLogLevel')]",
                 "MONGO_CONN_STR": "[parameters('MongodbConnectionString')]",
                 "MONGO_DB_NAME": "[parameters('MongodbDatabaseName')]",
                 "MONGO_COLLECTION": "[parameters('MongodbCollection')]",
@@ -159,7 +148,8 @@
                 "SECRET": "[parameters('AzureApplicationSecret')]",
                 "TENANT_ID": "[parameters('AzureApplicationTenantID')]",
                 "INIT_LOAD_BATCH_SIZE": "[parameters('InitSyncBatchSize')]",
-                "DELTA_SYNC_BATCH_SIZE": "[parameters('IncrementalSyncBatchSize')]"
+                "DELTA_SYNC_BATCH_SIZE": "[parameters('IncrementalSyncBatchSize')]",
+                "TIME_THRESHOLD_IN_SEC": "[parameters('IncrementalSyncMaxTimeInterval')]"
             }
         },
         {
