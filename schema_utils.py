@@ -105,9 +105,9 @@ def init_column_schema(column_dtype, first_item) -> dict:
 
     #Diana 107 comment and prints added
     # if not column_dtype:
-    print(f"SU: original column_dtype={column_dtype}")
+    #print(f"SU: original column_dtype={column_dtype}")
     column_dtype = COLUMN_DTYPE_CONVERSION_MAP.get(column_dtype.__str__(), column_dtype)
-    print(f"SU: converted column_dtype={column_dtype}")
+    #print(f"SU: converted column_dtype={column_dtype}")
     schema_of_this_column[DTYPE_KEY] = column_dtype
     schema_of_this_column[TYPE_KEY] = item_type
     return schema_of_this_column
