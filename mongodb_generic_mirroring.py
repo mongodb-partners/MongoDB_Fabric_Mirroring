@@ -43,6 +43,8 @@ def mirror():
         or not os.getenv("TENANT_ID")
         or not os.getenv("INIT_LOAD_BATCH_SIZE")
         or not os.getenv("DELTA_SYNC_BATCH_SIZE")
+    # added threshold time    
+        or not os.getenv("TIME_THRESHOLD_IN_SEC")
     ):
         raise ValueError("Missing environment variable.")
 
