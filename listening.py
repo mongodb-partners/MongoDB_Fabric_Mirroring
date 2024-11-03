@@ -26,18 +26,13 @@ import schemas
 import schema_utils
 from file_utils import FileType, read_from_file, write_to_file
 
-
-# MAX_ROWS = 1
-# Time is an env variable now
-#TIME_THRESHOLD_IN_SEC = 300
-time_threshold_in_sec = float(os.getenv("TIME_THRESHOLD_IN_SEC"))
-#print(f"The type of time_threshold_in_sec is: {type(time_threshold_in_sec)}")
-
 def listening(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
     db_name = os.getenv("MONGO_DB_NAME")
     logger.debug(f"db_name={db_name}")
     logger.debug(f"collection={collection_name}")
+    # moved listening method so that it is called after the env variables are loaded
+    time_threshold_in_sec = float(os.getenv("TIME_THRESHOLD_IN_SEC"))
     post_init_flush_done = False
 
     table_dir = get_table_dir(collection_name)
