@@ -15,12 +15,15 @@ from constants import (
     DATA_FILES_PATH,
     DELTA_SYNC_CACHE_PARQUET_FILE_NAME,
     DELTA_SYNC_RESUME_TOKEN_FILE_NAME,
+# added the two new files to save the initial sync status and last parquet file number
+    INIT_SYNC_STATUS_FILE_NAME,
+    LAST_PARQUET_FILE_NUMBER,
     DTYPE_KEY,
     TYPE_KEY,
 )
-from utils import to_string, get_parquet_full_path_filename, get_table_dir
+from utils import to_string, get_parquet_full_path_filename, get_temp_parquet_full_path_filename, get_table_dir
 from push_file_to_lz import push_file_to_lz
-from flags import get_init_flag
+#from flags import get_init_flag
 from init_sync import init_sync
 import schemas
 import schema_utils
@@ -57,10 +60,16 @@ def listening(collection_name: str):
     Thread(target=init_sync, args=(collection_name,)).start()
 
     logger.info(f"start listening to change stream for collection {collection_name}")
+    init_sync_stat_flag = None
     for change in cursor:
-        init_flag = get_init_flag(collection_name)
+  #      init_flag = get_init_flag(collection_name)
+        if not init_sync_stat_flag == "Y":
+           init_sync_stat_flag = read_from_file(
+            collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
+           )
         # do post init flush if this is the first iteration after init is done
-        if not init_flag and not post_init_flush_done:
+        #if not init_flag and not post_init_flush_done:
+        if init_sync_stat_flag == "Y" and not post_init_flush_done:
             __post_init_flush(collection_name, logger)
             post_init_flush_done = True
         # logger.debug(type(change))
@@ -79,7 +88,7 @@ def listening(collection_name: str):
         # process df according to internal schema
         schema_utils.process_dataframe(collection_name, df)
 
-        if init_flag:
+        if not init_sync_stat_flag == "Y":
             logger.debug(
                 f"collection {collection_name} still initializing, use UPSERT instead of INSERT"
             )
@@ -101,33 +110,43 @@ def listening(collection_name: str):
             logger.info(f"last_sync_time when first record added: {last_sync_time}")
 
 
-        if init_flag:
+        if not init_sync_stat_flag == "Y":
             if (accumulative_df is not None
                 and (
                       (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
                 )
             ):
                 prefix = TEMP_PREFIX_DURING_INIT
-                parquet_full_path_filename = get_parquet_full_path_filename(
+                # changed to a diff method just for temp as temp continues in local
+               # parquet_full_path_filename = get_parquet_full_path_filename(
+                parquet_full_path_filename = get_temp_parquet_full_path_filename(
                 collection_name, prefix=prefix
                 )
   
-                logger.info(f"writing parquet file: {parquet_full_path_filename}")
+                logger.info(f"writing TEMP parquet file: {parquet_full_path_filename}")
                 accumulative_df.to_parquet(parquet_full_path_filename)
                 accumulative_df = None
-
-        if not init_flag:
+        else:        
             if (accumulative_df is not None
                 and (
                       (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
-#                      or (time.time() - last_sync_time >= TIME_THRESHOLD_IN_SEC)
                        or ((time.time() - last_sync_time) >= time_threshold_in_sec)
                 )
             ):
                 prefix = ""
-                parquet_full_path_filename = get_parquet_full_path_filename(
-                collection_name, prefix=prefix
-               )
+            #     parquet_full_path_filename = get_parquet_full_path_filename(
+            #     collection_name, prefix=prefix
+            #    )
+            # changed to get last parquet file number from LZ for resilience
+            #parquet_full_path_filename = get_parquet_full_path_filename(collection_name)
+                last_parquet_file_num = read_from_file(
+                  collection_name, LAST_PARQUET_FILE_NUMBER, FileType.PICKLE
+                )
+                if not last_parquet_file_num:
+                    last_parquet_file_num = 0
+
+                parquet_full_path_filename = get_parquet_full_path_filename(collection_name, last_parquet_file_num)
+
                 logger.info(f"writing parquet file: {parquet_full_path_filename}")
                 accumulative_df.to_parquet(parquet_full_path_filename)
                 accumulative_df = None
@@ -143,7 +162,15 @@ def listening(collection_name: str):
                     DELTA_SYNC_RESUME_TOKEN_FILE_NAME,
                     FileType.PICKLE,
                 )
-
+                # write last parquet file number to file
+                last_parquet_file_num +=  1
+                logger.info(f"writing last parquet number into file: {last_parquet_file_num}")
+                write_to_file(
+                    last_parquet_file_num,
+                    collection_name,
+                    LAST_PARQUET_FILE_NUMBER,
+                    FileType.PICKLE,
+                )
 
 def __post_init_flush(table_name: str, logger):
     if not logger:
@@ -163,7 +190,14 @@ def __post_init_flush(table_name: str, logger):
     )
     for temp_parquet_filename in temp_parquet_filename_list:
         temp_parquet_full_path = os.path.join(table_dir, temp_parquet_filename)
-        new_parquet_full_path = get_parquet_full_path_filename(table_name)
+        # changed to get last parquet file number from LZ for resilience
+        #new_parquet_full_path = get_parquet_full_path_filename(table_name)
+        last_parquet_file_num = read_from_file(
+            table_name, LAST_PARQUET_FILE_NUMBER, FileType.PICKLE
+        )
+        if not last_parquet_file_num:
+            last_parquet_file_num = 0
+        new_parquet_full_path = get_parquet_full_path_filename(table_name, last_parquet_file_num)   
         logger.debug("renaming temp parquet file")
         logger.debug(f"old name: {temp_parquet_full_path}")
         logger.debug(f"new name: {new_parquet_full_path}")
@@ -172,3 +206,12 @@ def __post_init_flush(table_name: str, logger):
         )
         os.rename(temp_parquet_full_path, new_parquet_full_path)
         push_file_to_lz(new_parquet_full_path, table_name)
+        # write last parquet file number to file
+        last_parquet_file_num +=  1
+        logger.info(f"writing last parquet number into file: {last_parquet_file_num}")
+        write_to_file(
+            last_parquet_file_num,
+            table_name,
+            LAST_PARQUET_FILE_NUMBER,
+            FileType.PICKLE,
+        )

@@ -33,7 +33,12 @@ CHANGE_STREAM_OPERATION_MAP_WHEN_INIT = {
 
 TEMP_PREFIX_DURING_INIT = "Temp_"
 
-INIT_SYNC_CURRENT_SKIP_FILE_NAME = "init_sync_current_skip"
+#INIT_SYNC_CURRENT_SKIP_FILE_NAME = "init_sync_current_skip"
+# added the two new files to save the initial sync status and last parquet file number
+
+INIT_SYNC_STATUS_FILE_NAME = "_init_sync_status.pkl"
+
+LAST_PARQUET_FILE_NUMBER = "_last_created_parquet.pkl"
 
 INIT_SYNC_LAST_ID_FILE_NAME = "_last_id.pkl"
 

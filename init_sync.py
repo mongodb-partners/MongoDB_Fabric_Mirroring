@@ -14,39 +14,70 @@ from constants import (
     MONGODB_READING_BATCH_SIZE,
     METADATA_FILE_NAME,
     DATA_FILES_PATH,
-    INIT_SYNC_CURRENT_SKIP_FILE_NAME,
+#    INIT_SYNC_CURRENT_SKIP_FILE_NAME,
+# added the two new files to save the initial sync status and last parquet file number
+    INIT_SYNC_STATUS_FILE_NAME,
+    LAST_PARQUET_FILE_NUMBER,
     INIT_SYNC_LAST_ID_FILE_NAME,
     INIT_SYNC_MAX_ID_FILE_NAME,
 )
 import schema_utils
 from utils import get_parquet_full_path_filename, to_string, get_table_dir
 from push_file_to_lz import push_file_to_lz
-from flags import set_init_flag, clear_init_flag
+# not required as now init_sync stat is stored in LZ
+#from flags import set_init_flag, clear_init_flag
 from file_utils import FileType, read_from_file, write_to_file, delete_file
 
 
 def init_sync(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
-    # skip init_sync if there's already parquet files and no current_skip/last_id file
-    table_dir = get_table_dir(collection_name)
-    current_skip_file_path = os.path.join(table_dir, INIT_SYNC_CURRENT_SKIP_FILE_NAME)
-    last_id_file_path = os.path.join(table_dir, INIT_SYNC_LAST_ID_FILE_NAME)
-    # needs to exclude the situation of cache or temp parquet files exist but
-    # not normal numbered parquet files, in which case we shouldn't skip init sync
-    if (
-        not os.path.exists(last_id_file_path)
-        and os.path.exists(table_dir)
-        and any(
-            file.endswith(".parquet") and os.path.splitext(file)[0].isnumeric()
-            for file in os.listdir(table_dir)
-        )
-    ):
+
+    # detect if there's a init_sync_stat file in LZ, and get its value
+    init_sync_stat_flag = read_from_file(
+        collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
+    )
+    if init_sync_stat_flag == "Y":
         logger.info(
             f"init sync for collection {collection_name} has already finished previously. Skipping init sync this time."
         )
         return
+    
+    # detect if there's a last_id file, and restore last_id from it
+    last_id = read_from_file(
+        collection_name, INIT_SYNC_LAST_ID_FILE_NAME, FileType.PICKLE
+    )
+    if (init_sync_stat_flag == "N" and last_id):
+        logger.info(
+            f"interrupted init sync detected, continuing with previous _id={last_id}"
+        )
+    # skip old logic with LZ file for init_sync_stat    
+    # skip init_sync if there's already parquet files and no current_skip/last_id file
+    #table_dir = get_table_dir(collection_name)
+    #current_skip_file_path = os.path.join(table_dir, INIT_SYNC_CURRENT_SKIP_FILE_NAME)
+    #last_id_file_path = os.path.join(table_dir, INIT_SYNC_LAST_ID_FILE_NAME)
+    # needs to exclude the situation of cache or temp parquet files exist but
+    # not normal numbered parquet files, in which case we shouldn't skip init sync
+    # if (
+    #     not os.path.exists(last_id_file_path)
+    #     and os.path.exists(table_dir)
+    #     and any(
+    #         file.endswith(".parquet") and os.path.splitext(file)[0].isnumeric()
+    #         for file in os.listdir(table_dir)
+    #     )
+    # ):
+
     logger.info(f"begin init sync for {collection_name}")
-    set_init_flag(collection_name)
+    
+    # begin by writing init_sync_stat file with "N" as value
+    #set_init_flag(collection_name)
+    if not init_sync_stat_flag:
+        # writing init_sync_stat file with "N"
+        init_sync_stat_flag = "N"
+        logger.info(f"writing init sync stat file with as 'N' for {collection_name}")
+        write_to_file(
+            init_sync_stat_flag, collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
+        ) 
+
     db_name = os.getenv("MONGO_DB_NAME")
     logger.debug(f"db_name={db_name}")
     logger.debug(f"collection={collection_name}")
@@ -77,14 +108,15 @@ def init_sync(collection_name: str):
 
     columns_to_convert_to_str = None
 
+    #moved to the begining to check if initial sync is completed
     # detect if there's a last_id file, and restore last_id from it
-    last_id = read_from_file(
-        collection_name, INIT_SYNC_LAST_ID_FILE_NAME, FileType.PICKLE
-    )
-    if last_id:
-        logger.info(
-            f"interrupted init sync detected, continuing with previous _id={last_id}"
-        )
+    # last_id = read_from_file(
+    #     collection_name, INIT_SYNC_LAST_ID_FILE_NAME, FileType.PICKLE
+    # )
+    # if last_id:
+    #     logger.info(
+    #         f"interrupted init sync detected, continuing with previous _id={last_id}"
+    #     )
 
     while last_id is None or last_id < max_id:
         # for debug only
@@ -128,7 +160,16 @@ def init_sync(collection_name: str):
             logger.info(f"TIME: trans took {trans_end_time-read_end_time:.2f} seconds")
 
         logger.debug("creating parquet file...")
-        parquet_full_path_filename = get_parquet_full_path_filename(collection_name)
+        # changed to get last parquet file number from LZ for resilience
+        #parquet_full_path_filename = get_parquet_full_path_filename(collection_name)
+        last_parquet_file_num = read_from_file(
+        collection_name, LAST_PARQUET_FILE_NUMBER, FileType.PICKLE
+        )
+        if not last_parquet_file_num:
+           last_parquet_file_num = 0
+
+        parquet_full_path_filename = get_parquet_full_path_filename(collection_name, last_parquet_file_num)
+        
         logger.info(f"writing parquet file: {parquet_full_path_filename}")
         batch_df.to_parquet(parquet_full_path_filename, index=False)
         write_end_time = time.time()
@@ -139,11 +180,10 @@ def init_sync(collection_name: str):
             metadata_json_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), METADATA_FILE_NAME
             )
-            #Diana 143
             logger.info("writing metadata file to LZ")
             push_file_to_lz(metadata_json_path, collection_name)
+        # write the current batch to LZ
         push_start_time = time.time()
-        #Diana 147
         logger.info("writing parquet file to LZ")
         push_file_to_lz(parquet_full_path_filename, collection_name)
         push_end_time = time.time()
@@ -156,12 +196,26 @@ def init_sync(collection_name: str):
         write_to_file(
             last_id, collection_name, INIT_SYNC_LAST_ID_FILE_NAME, FileType.PICKLE
         )
+        # write last parquet file number to file
+        last_parquet_file_num += 1
+        logger.info(f"writing last parquet number into file: {last_parquet_file_num}")
+        write_to_file(
+            last_parquet_file_num,
+            collection_name,
+            LAST_PARQUET_FILE_NUMBER,
+            FileType.PICKLE,
+        )
 
     # delete last_id file, as init sync is complete
     logger.info("removing the last_id file")
     delete_file(collection_name, INIT_SYNC_LAST_ID_FILE_NAME)
 
-    clear_init_flag(collection_name)
+    #set_init_flag_stat as complete = Y
+    logger.info("Setting init_sync_stat flag as Y")
+    init_sync_stat_flag = "Y"
+    write_to_file(
+        init_sync_stat_flag, collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
+    )
     logger.info(f"init sync completed for collection {collection_name}")
 
 
