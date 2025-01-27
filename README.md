@@ -6,21 +6,33 @@ It requires two main steps:
 2. Deploy Code to run in an App service using `Deploy to Azure` button below or to a VM by cloning the Git repo and running the `app.py` script.\
 Once started, app will continously keep track of the changes in MongoDB Atlas and replicate them to the MirrorDB created in Step 1.
 
-# Step1: Fabric Mount Generation
-To create the mount for replication, we just need to run the `Fabric Generic mount creation/MirrorDB_creation.py` code.
+# Step1: MirrorDB Creation
+To create the MirrorDB, we use the Fabric UI.
 
-## Pre-requisites for Step1:
-1. Rename `Fabric Generic mount creation/.env_example_mount` to `Fabric Generic mount creation/.env`
-2. To get the WORKSPACE_ID, Open the Fabric UI, select the Workspace where you want the Mirror DB to be created. The Workspace ID is part of the url. For e.g : In the url "https://app.fabric.microsoft.com/groups/daacbe4d-4fd8-4cbd-bc0b-b211356b30c5/list?experience=power-bi", `daacbe4d-4fd8-4cbd-bc0b-b211356b30c5` is the Workspace Id.
-3. Open Developer Tools, check Network Activity, Select "Disable Cache", get any API (endpoint api or workspace api or any other api). Copy the Bearer Token from the Request Header. This is also explained in the `Fabric Generic mount creation/Generic Mount Creation Steps.pdf` file.
+Follow the steps below for the MirrorDB (LZ) creation.
+1. Click on the “+ New Item” in your workspace.
+<img width="1726" alt="MirrorDB_1" src="https://github.com/user-attachments/assets/4c3719d4-30de-44f8-8aba-1088be22eda2" />
+ 
+\
+2. In the pop up window that opens, select “Mirrored Database (preview)”
+<img width="1726" alt="MirrorDB_2" src="https://github.com/user-attachments/assets/1af1fcdd-b9bb-47f1-848d-3362897d8db0" />
 
-## Step1 Execution
-1. Make sure all environment variables are set in the `.env` file
-1. To Start Fabric MirrorDB creation, simply run `Fabric Generic mount creation/MirrorDB_creation.py`
+\
+3. Give a name for your new MirrorDB.
+<img width="752" alt="MirrorDB_3" src="https://github.com/user-attachments/assets/90efb673-22a7-415f-bd6a-e65a6b856edc" />
 
-## Output Verification
-1. The terminal prints will indicate the execution of 4 APIs. The 2nd API will create the Fabric mount and we can verify that in Fabric.
-2. After the 4th API is run, we can check in Fabric and see that Replication Status is `Running`. 
+\
+4. The new MirrorDB creation will begin and the screen shows the progress of the same.
+<img width="602" alt="MirrorDB_5" src="https://github.com/user-attachments/assets/c2a00531-a058-408f-b98e-bcb294f6694f" />   
+
+5. The new MirrorDB creation is complete when you see the below screen showing that replication is “Running”. Note that you can get the LandingZone url also from this screen.
+<img width="1722" alt="MirrorDB_6" src="https://github.com/user-attachments/assets/a0accf46-7fd1-439f-b389-692043523f77" />
+Also, note that you may have to add “/” at the end of this url when you trigger the mirroring script.
+
+\
+6. You can also verify the LandingZone folder created within the MirrorDB in Azure storage explorer.
+<img width="1725" alt="MirrorDB_7" src="https://github.com/user-attachments/assets/4184df8b-02aa-43cd-a364-8983f8082a35" />
+
 
 # Step2: Start Mirroring
 Step 2 is basically executing the ARM template by clicking the `Deploy to Azure` button. But, we need to get the parameters to be provided to the ARM template ready beforehand.
