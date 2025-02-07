@@ -40,8 +40,8 @@ Step 2 is basically executing the ARM template by clicking the `Deploy to Azure`
 ## Pre-requisites for Step2:
 1. Keep the MongoDB `Connection uri`, `Database name` and `Collection name` handy for input in ARM template.
 Note you can give multiple collections as an array `[col1, col2]` or can give `all` for all collections in a Database.
-2. Install Azure Storage explorer. Connect to Azure Storage by selecting `Attach to a resource` -> `ADLS Gen2 container or directory` -> `Sign in using Oauth`. Select your Azure login id and on next screen give the `Blob container or directory URL` as `https://onelake.blob.fabric.microsoft.com/<workspace name in Fabric>`. Once connected you can see the Workspace under `Storage Accounts` -> `(Attached Containers)` -> `Blob Containers`. Double click your Workspace, you should see the MirrorDB folder. In your MirrorDB folder create a new folder called `LandingZone` within `Files` folder. Then right click `LandingZone` and choose `Copy URL` -> `With DFS Endpoint`
-
+2. Install Azure Storage explorer. Connect to Azure Storage by selecting `Attach to a resource` -> `ADLS Gen2 container or directory` -> `Sign in using Oauth`. Select your Azure login id and on next screen give the `Blob container or directory URL` as `https://onelake.blob.fabric.microsoft.com/<workspace name in Fabric>`. Once connected you can see the Workspace under `Storage Accounts` -> `(Attached Containers)` -> `Blob Containers`. Double click your Workspace, you should see the MirrorDB folder. You should also have a `LandingZone` folder within `Files` folder. You can always check for parquet files in this folder which will get replicated to OneLake and shown as tables in OneLake.
+   
 ![image](https://github.com/user-attachments/assets/4c2ec669-4164-475a-b56c-b0bd2cadf940)
 
 4. For authentication, its through Service Principal and so we need to go to `App Registrations` in Azure portal and register a new app. Also create a new secret in the App. Get the Tenant Id, App Id and the value of the secret for input in ARM template. the secret value should be copied when being created, you will not be able to see it later.
@@ -70,3 +70,10 @@ Clicking below button, will take you to Azure portal, give in the values for the
 Click below to start your App service for MongoDB to Fabric replication:
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fmongodb-partners%2FMongoDB_Fabric_Mirroring%2Fmain%2FARM_template.json)
+
+## Best Practices and Troubleshooting
+1. Please note the code actually creates two threads for each collection (one for initial_sync and one for delta_sync) and thus if we have large collections (~10 Million+ records), we should be judicous in selecting the compute size of the App service or VM. As a high level bench mark, a compute of 4 CPUs, 16 GiB of memory might work for 5 such collections with a high throughput of say 1000 records/second. Beyond, that we should really monitor the performance and threads and check the CPU usage.
+2. Azure Storage explorer is your point to start the troubleshooting. Use below files that start with an underscore to get vital information. (They are not copied to OneLake as they start with underscore"_"). Also note these are pickle files and you can view them using command "python -mpickle _maxid.pkl” in terminal.
+   a. _max_id file: Will tell you what was the maximum _id field that was captured before initial sync begain. Any _id > this _id from _max_id is coming from real time sync. All records with _id <= this _max_id are copied as part of initial_sync
+   b. _resume_token: Contains the last resume token of the real time change event copied to LZ.
+   b. _initial_sync_status: Indicates initial_sync is complete or not.
