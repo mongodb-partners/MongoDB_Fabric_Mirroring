@@ -73,7 +73,7 @@ Click below to start your App service for MongoDB to Fabric replication:
 
 ## Best Practices and Troubleshooting
 1. Please note the code actually creates two threads for each collection (one for initial_sync and one for delta_sync) and thus if we have large collections (~10 Million+ records), we should be judicous in selecting the compute size of the App service or VM. As a high level bench mark, a compute of 4 CPUs, 16 GiB of memory might work for 5 such collections with a high throughput of say 1000 records/second. Beyond, that we should really monitor the performance and threads and check the CPU usage.
-2. Azure Storage explorer is your point to start the troubleshooting. Use below files that start with an underscore to get vital information. (They are not copied to OneLake as they start with underscore"_"). Also note these are pickle files and you can view them using command "python -mpickle _maxid.pkl” in terminal.
-   a. _max_id file: Will tell you what was the maximum _id field that was captured before initial sync begain. Any _id > this _id from _max_id is coming from real time sync. All records with _id <= this _max_id are copied as part of initial_sync
-   b. _resume_token: Contains the last resume token of the real time change event copied to LZ.
-   b. _initial_sync_status: Indicates initial_sync is complete or not.
+2. Azure Storage explorer is your point to start the troubleshooting. Use below files that start with an underscore to get vital information. (They are not copied to OneLake as they start with underscore"_"). Also note these are pickle files and you can view them using command "python -mpickle _maxid.pkl” in terminal.      
+   a. _max_id file: Will tell you what was the maximum _id field that was captured before initial sync begain. Any _id > this _id from _max_id is coming from real time sync. All records with _id <= this _max_id are copied as part of initial_sync   
+   b. _resume_token: Contains the last resume token of the real time change event copied to LZ.   
+   b. _initial_sync_status: Indicates initial_sync is complete or not.   
