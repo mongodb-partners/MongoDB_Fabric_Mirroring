@@ -61,86 +61,110 @@ def listening(collection_name: str):
 
     logger.info(f"start listening to change stream for collection {collection_name}")
     init_sync_stat_flag = None
-    for change in cursor:
-  #      init_flag = get_init_flag(collection_name)
-        if not init_sync_stat_flag == "Y":
-           init_sync_stat_flag = read_from_file(
-            collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
-           )
-        # do post init flush if this is the first iteration after init is done
-        #if not init_flag and not post_init_flush_done:
-        if init_sync_stat_flag == "Y" and not post_init_flush_done:
-            __post_init_flush(collection_name, logger)
-            post_init_flush_done = True
-        # logger.debug(type(change))
-        logger.debug("original change from Change Stream:")
-        logger.debug(change)
-        operationType = change["operationType"]
-        if operationType not in CHANGE_STREAM_OPERATION_MAP:
-            logger.error(f"ERROR: unsupported operation found: {operationType}")
-            continue
-        if operationType == "delete":
-            doc: dict = change["documentKey"]
-        else:  # insert or update
-            doc: dict = change["fullDocument"]
-        df = pd.DataFrame([doc])
+    ##>> enhancement to check time elapsed even if no event comes - no waiting indefinitely for a change
+    #for change in cursor:
+    with cursor as stream:
+        while stream.alive:
+          change = stream.try_next()
+          if change is not None:
+            # init_flag = get_init_flag(collection_name)
+            if not init_sync_stat_flag == "Y":
+                init_sync_stat_flag = read_from_file(
+                  collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
+                )
+            # do post init flush if this is the first iteration after init is done
+            #if not init_flag and not post_init_flush_done:
+            if init_sync_stat_flag == "Y" and not post_init_flush_done:
+                __post_init_flush(collection_name, logger)
+                post_init_flush_done = True
+            # logger.debug(type(change))
+            logger.debug("original change from Change Stream:")
+            logger.debug(change)
+            operationType = change["operationType"]
+            if operationType not in CHANGE_STREAM_OPERATION_MAP:
+                logger.error(f"ERROR: unsupported operation found: {operationType}")
+                continue
+            if operationType == "delete":
+                doc: dict = change["documentKey"]
+            else:  # insert or update
+                doc: dict = change["fullDocument"]
+            df = pd.DataFrame([doc])
+            ##>>> added here so that the resume token is updated always for every change
+            resume_token = change["_id"]
+            logger.debug(resume_token)
+            # process df according to internal schema
+            schema_utils.process_dataframe(collection_name, df)
 
-        # process df according to internal schema
-        schema_utils.process_dataframe(collection_name, df)
+            if not init_sync_stat_flag == "Y":
+                logger.debug(
+                    f"collection {collection_name} still initializing, use UPSERT instead of INSERT"
+                )
+                row_marker_value = CHANGE_STREAM_OPERATION_MAP_WHEN_INIT[operationType]
+            else:
+                row_marker_value = CHANGE_STREAM_OPERATION_MAP[operationType]
+            df.insert(0, ROW_MARKER_COLUMN_NAME, [row_marker_value])
 
-        if not init_sync_stat_flag == "Y":
-            logger.debug(
-                f"collection {collection_name} still initializing, use UPSERT instead of INSERT"
+
+            # merge the df to accumulative_df till batch size reached
+            if accumulative_df is not None:
+                accumulative_df = pd.concat([accumulative_df, df], ignore_index=True)
+                logger.info("concat accumulative_df result:")
+                logger.info(accumulative_df)
+            else:
+                logger.info("df created")
+                accumulative_df = df
+                last_sync_time: float = time.time()
+                logger.info(f"last_sync_time when first record added: {last_sync_time}")
+
+
+            accumulative_df, last_sync_time = process_accumulative_df(
+                accumulative_df, collection_name, init_sync_stat_flag, last_sync_time, time_threshold_in_sec, resume_token, logger
             )
-            row_marker_value = CHANGE_STREAM_OPERATION_MAP_WHEN_INIT[operationType]
-        else:
-            row_marker_value = CHANGE_STREAM_OPERATION_MAP[operationType]
-        df.insert(0, ROW_MARKER_COLUMN_NAME, [row_marker_value])
-
-
-        # merge the df to accumulative_df till batch size reached
-        if accumulative_df is not None:
-            accumulative_df = pd.concat([accumulative_df, df], ignore_index=True)
-            logger.info("concat accumulative_df result:")
-            logger.info(accumulative_df)
-        else:
-            logger.info("df created")
-            accumulative_df = df
-            last_sync_time: float = time.time()
-            logger.info(f"last_sync_time when first record added: {last_sync_time}")
-
-
-        if not init_sync_stat_flag == "Y":
-            if (accumulative_df is not None
-                and (
-                      (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
+        ##>> enhancement to check time elapsed even if no event comes - no waiting indefinitely for a change
+            continue
+          else:
+            if not init_sync_stat_flag == "Y":
+                init_sync_stat_flag = read_from_file(
+                  collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
                 )
+            # do post init flush if this is the first iteration after init is done
+            #if not init_flag and not post_init_flush_done:
+            if init_sync_stat_flag == "Y" and not post_init_flush_done:
+                __post_init_flush(collection_name, logger)
+                post_init_flush_done = True
+            
+            if (accumulative_df is not None
             ):
-                prefix = TEMP_PREFIX_DURING_INIT
-                # changed to a diff method just for temp as temp continues in local
-               # parquet_full_path_filename = get_parquet_full_path_filename(
-                parquet_full_path_filename = get_temp_parquet_full_path_filename(
+                accumulative_df, last_sync_time = process_accumulative_df(
+                    accumulative_df, collection_name, init_sync_stat_flag, last_sync_time, time_threshold_in_sec, resume_token, logger
+            )
+          print("Sleeping for 20 seconds")
+          time.sleep(20)
+##>> enhancement to check time elapsed even if no event comes - no waiting indefinitely for a change
+def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_flag, last_sync_time, time_threshold_in_sec, resume_token, logger):
+    if not init_sync_stat_flag == "Y":
+        if (accumulative_df is not None
+            and (
+                (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
+            )
+        ):
+            prefix = TEMP_PREFIX_DURING_INIT
+            parquet_full_path_filename = get_temp_parquet_full_path_filename(
                 collection_name, prefix=prefix
-                )
-  
-                logger.info(f"writing TEMP parquet file: {parquet_full_path_filename}")
-                accumulative_df.to_parquet(parquet_full_path_filename)
-                accumulative_df = None
-        else:        
-            if (accumulative_df is not None
-                and (
-                      (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
-                       or ((time.time() - last_sync_time) >= time_threshold_in_sec)
-                )
+            )
+            logger.info(f"writing TEMP parquet file: {parquet_full_path_filename}")
+            accumulative_df.to_parquet(parquet_full_path_filename)
+            accumulative_df = None
+    else:        
+        if (accumulative_df is not None
+        ):
+            if(
+                (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
+                or ((time.time() - last_sync_time) >= time_threshold_in_sec)
             ):
                 prefix = ""
-            #     parquet_full_path_filename = get_parquet_full_path_filename(
-            #     collection_name, prefix=prefix
-            #    )
-            # changed to get last parquet file number from LZ for resilience
-            #parquet_full_path_filename = get_parquet_full_path_filename(collection_name)
                 last_parquet_file_num = read_from_file(
-                  collection_name, LAST_PARQUET_FILE_NUMBER, FileType.PICKLE
+                    collection_name, LAST_PARQUET_FILE_NUMBER, FileType.PICKLE
                 )
                 if not last_parquet_file_num:
                     last_parquet_file_num = 0
@@ -152,9 +176,7 @@ def listening(collection_name: str):
                 accumulative_df = None
 
                 push_file_to_lz(parquet_full_path_filename, collection_name)
-                # wirte _id of current change as resume token to file, after successful
-                #     push parquet to lz
-                resume_token = change["_id"]
+            #    resume_token = change["_id"]
                 logger.info(f"writing resume_token into file: {resume_token}")
                 write_to_file(
                     resume_token,
@@ -162,7 +184,6 @@ def listening(collection_name: str):
                     DELTA_SYNC_RESUME_TOKEN_FILE_NAME,
                     FileType.PICKLE,
                 )
-                # write last parquet file number to file
                 last_parquet_file_num +=  1
                 logger.info(f"writing last parquet number into file: {last_parquet_file_num}")
                 write_to_file(
@@ -170,7 +191,8 @@ def listening(collection_name: str):
                     collection_name,
                     LAST_PARQUET_FILE_NUMBER,
                     FileType.PICKLE,
-                )
+            )
+    return accumulative_df, last_sync_time
 
 def __post_init_flush(table_name: str, logger):
     if not logger:

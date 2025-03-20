@@ -24,6 +24,10 @@ logger = logging.getLogger(f"{__name__}")
 def _converter_template(obj, type_name, raw_convert_func, default_value=None):
     original_type = type(obj)
     try:
+        print(f"DJ: obj={obj}")
+        print(f"DJ: type(obj)={type(obj)}")
+        print(f"DJ: type_name={type_name}")
+        print(f"DJ: raw_convert_func={raw_convert_func}")
         return raw_convert_func(obj)
     except (ValueError, TypeError):
         logger.warning(
@@ -186,9 +190,18 @@ def process_dataframe(table_name: str, df: pd.DataFrame):
         current_dtype = df[col_name].dtype
         current_first_item = _get_first_item(df, col_name)
         current_item_type = type(current_first_item)
+        #>>> Test
+        print(f"DJ: current column name={col_name}")
+        print(f"DJ: current column df[col_name]={df[col_name]}")
+        print(f"DJ: current_dtype={current_dtype}")
+        print(f"DJ: current_first_item={current_first_item}")
+        print(f"DJ: current_item_type={current_item_type}")
+        #<<< Test
 
         processed_col_name = schemas.find_column_renaming(table_name, col_name)
         schema_of_this_column = schemas.get_table_column_schema(table_name, col_name)
+        print(f"DJ: processed_col_name={processed_col_name}")
+        print(f"DJ: schema_of_this_column={schema_of_this_column}")
 
         if not processed_col_name and not schema_of_this_column:
             # new column, process it and append schema
@@ -215,15 +228,28 @@ def process_dataframe(table_name: str, df: pd.DataFrame):
 
         # schema_of_this_colum should always exists at this point
         # existing column or new column with schema appended, process accroding to schema_of_this_colum
-        if current_item_type != schema_of_this_column[TYPE_KEY]:
-            logger.debug(
-                f"different item type detected: current_item_type={current_item_type}, item type from schema={schema_of_this_column[TYPE_KEY]}"
-            )
-            df[col_name] = df[col_name].apply(
-                TYPE_TO_CONVERT_FUNCTION_MAP.get(
-                    schema_of_this_column[TYPE_KEY], do_nothing
+        #if current_item_type != schema_of_this_column[TYPE_KEY]:
+        expected_type = schema_of_this_column[TYPE_KEY]
+        for item in df[col_name]:
+            if not isinstance(type(item), expected_type):
+                logger.debug(
+                    f" item type detected: current item is {item} of type={type(item)}, expected item type from schema= {expected_type}"
                 )
-            )
+                conversion_fcn = TYPE_TO_CONVERT_FUNCTION_MAP.get(
+                    expected_type, do_nothing
+                )
+                print(f"DJ: conversiondifferent_fcn={conversion_fcn}")
+                df[col_name] = df[col_name].apply(conversion_fcn)
+                #df[col_name][item]=df[col_name][item].apply(conversion_fcn) 
+                #print(f"DJ: New item={item}")
+                print(f"DJ: df[col_name]={df[col_name]}")
+                #print(f"DJ: New type(item)={type(df[col_name])}")
+                print(f"DJ: New df[col_name].dtype={df[col_name].dtype}")
+                break
+        for index, item in enumerate(df[col_name]):
+            print(f"Row {index}: Value={item}, Type={type(item)}")
+            
+        current_dtype = df[col_name].dtype
         logger.debug(f"current_dtype={current_dtype}")
         logger.debug(
             f"schema_of_this_column[DTYPE_KEY]={schema_of_this_column[DTYPE_KEY]}"
