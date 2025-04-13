@@ -5,16 +5,16 @@ def process_dataframe(table_name: str, df: pd.DataFrame):
         current_item_type = type(current_first_item)
         
         # Debugging
-        print(f"DJ: current column name={col_name}")
-        print(f"DJ: current column df[col_name]={df[col_name]}")
-        print(f"DJ: current_dtype={current_dtype}")
-        print(f"DJ: current_first_item={current_first_item}")
-        print(f"DJ: current_item_type={current_item_type}")
+        # print(f"DJ: current column name={col_name}")
+        # print(f"DJ: current column df[col_name]={df[col_name]}")
+        # print(f"DJ: current_dtype={current_dtype}")
+        # print(f"DJ: current_first_item={current_first_item}")
+        # print(f"DJ: current_item_type={current_item_type}")
 
         processed_col_name = schemas.find_column_renaming(table_name, col_name)
         schema_of_this_column = schemas.get_table_column_schema(table_name, col_name)
-        print(f"DJ: processed_col_name={processed_col_name}")
-        print(f"DJ: schema_of_this_column={schema_of_this_column}")
+        # print(f"DJ: processed_col_name={processed_col_name}")
+        # print(f"DJ: schema_of_this_column={schema_of_this_column}")
 
         if not processed_col_name and not schema_of_this_column:
             # New column, process it and append schema

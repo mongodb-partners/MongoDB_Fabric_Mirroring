@@ -52,6 +52,7 @@ INTERNAL_SCHEMA_FILE_NAME = "_internal_schema.pkl"
 
 COLUMN_RENAMING_FILE_NAME = "_column_renaming.pkl"
 
+CONVERSION_LOG_FILE_NAME = "_conversion_log.txt"
 # dict keys for schema
 TYPE_KEY = "type"
 DTYPE_KEY = "dtype"

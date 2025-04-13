@@ -1,3 +1,4 @@
+import pprint
 import pymongo
 from pymongo.collection import Collection
 import time
@@ -8,6 +9,7 @@ import logging
 import glob
 from bson import ObjectId
 import pickle
+import numpy as np
 
 from constants import (
     TYPES_TO_CONVERT_TO_STR,
@@ -171,8 +173,12 @@ def init_sync(collection_name: str):
         parquet_full_path_filename = get_parquet_full_path_filename(collection_name, last_parquet_file_num)
         
         logger.info(f"writing parquet file: {parquet_full_path_filename}")
-        batch_df.to_parquet(parquet_full_path_filename, index=False)
-        write_end_time = time.time()
+        batch_df.to_csv("temp.csv", index=False)
+        
+        temp_df = pd.read_csv("temp.csv", index_col=False)
+        temp_df.to_parquet(parquet_full_path_filename, index=False)
+        # os.remove("temp.csv")
+        write_end_time = time.time()    
         if enable_perf_timer:
             logger.info(f"TIME: write took {write_end_time-trans_end_time:.2f} seconds")
     #>>># changes to remove write metadata.json here as it will now be written as the first file in mongodb_generic_mirroring.py - 6Mar2025

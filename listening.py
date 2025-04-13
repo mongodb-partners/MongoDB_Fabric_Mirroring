@@ -5,6 +5,7 @@ import logging
 import os
 import pickle
 from threading import Thread
+import threading
 
 from constants import (
     ROW_MARKER_COLUMN_NAME,
@@ -28,6 +29,7 @@ from init_sync import init_sync
 import schemas
 import schema_utils
 from file_utils import FileType, read_from_file, write_to_file
+semaphore = threading.Semaphore(1)
 
 def listening(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
@@ -68,9 +70,10 @@ def listening(collection_name: str):
           change = stream.try_next()
           if change is not None:
             # init_flag = get_init_flag(collection_name)
+            # with semaphore:
             if not init_sync_stat_flag == "Y":
                 init_sync_stat_flag = read_from_file(
-                  collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
+                collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
                 )
             # do post init flush if this is the first iteration after init is done
             #if not init_flag and not post_init_flush_done:
@@ -123,15 +126,15 @@ def listening(collection_name: str):
         ##>> enhancement to check time elapsed even if no event comes - no waiting indefinitely for a change
             continue
           else:
-            if not init_sync_stat_flag == "Y":
-                init_sync_stat_flag = read_from_file(
-                  collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
-                )
+            # if not init_sync_stat_flag == "Y":
+            #     init_sync_stat_flag = read_from_file(``
+            #       collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
+            #     )
             # do post init flush if this is the first iteration after init is done
             #if not init_flag and not post_init_flush_done:
-            if init_sync_stat_flag == "Y" and not post_init_flush_done:
-                __post_init_flush(collection_name, logger)
-                post_init_flush_done = True
+            # if init_sync_stat_flag == "Y" and not post_init_flush_done:
+            #     __post_init_flush(collection_name, logger)
+            #     post_init_flush_done = True
             
             if (accumulative_df is not None
             ):

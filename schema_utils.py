@@ -6,8 +6,10 @@ import pandas as pd
 import numpy as np
 import pickle
 
+from push_file_to_lz import push_file_to_lz
 from utils import get_table_dir
 from constants import (
+    CONVERSION_LOG_FILE_NAME,
     INTERNAL_SCHEMA_FILE_NAME,
     TYPE_KEY,
     DTYPE_KEY,
@@ -15,23 +17,25 @@ from constants import (
     COLUMN_RENAMING_FILE_NAME,
 )
 import schemas
-from file_utils import FileType, read_from_file
+from file_utils import FileType, append_to_file, read_from_file
 
 
 logger = logging.getLogger(f"{__name__}")
 
-
 def _converter_template(obj, type_name, raw_convert_func, default_value=None):
     original_type = type(obj)
     try:
-        print(f"DJ: obj={obj}")
-        print(f"DJ: type(obj)={type(obj)}")
-        print(f"DJ: type_name={type_name}")
-        print(f"DJ: raw_convert_func={raw_convert_func}")
         return raw_convert_func(obj)
     except (ValueError, TypeError):
-        logger.warning(
-            f'Unsuccessful conversion from "{obj}" of type {original_type} to {type_name}.'
+        logger.warning(f'Unsuccessful conversion from "{obj}" of type {original_type} to {type_name}.')
+        global conversion_flag
+        conversion_flag = True
+
+        append_to_file(
+            f"\n{current_column_name:<20} | {str(obj):<20} | {str(default_value):<20}",
+            table_name,
+            CONVERSION_LOG_FILE_NAME,
+            FileType.TEXT
         )
         return default_value
 
@@ -66,11 +70,12 @@ def to_numpy_bool(obj) -> np.bool_:
 
 
 def to_numpy_float64(obj) -> np.float64:
-    return _converter_template(obj, "numpy.float64", lambda o: np.float64(o))
+    return _converter_template(obj, "numpy.float64", np.float64(obj)) #lambda o: np.float64(o) if o is not None else np.nan)
 
 
 def to_pandas_timestamp(obj) -> pd.Timestamp:
-    return _converter_template(obj, "pandas.Timestamp", lambda o: pd.Timestamp(o))
+    # return _converter_template(obj, "pandas.Timestamp", lambda o: pd.Timestamp(o))
+    return _converter_template(obj, "pandas.Timestamp", lambda o: pd.to_datetime(o, utc=True) if o is not None else None)
 
 
 def do_nothing(obj):
@@ -104,6 +109,7 @@ def init_column_schema(column_dtype, first_item) -> dict:
         item_type = str
     # when encountering NoneType column, force convert it to str
     if item_type == NoneType:
+    # if item_type is None:
         item_type = str
         column_dtype = "object"
 
@@ -185,23 +191,17 @@ def init_table_schema(table_name: str):
         schemas.init_column_renaming(table_name, column_renaming_of_this_table)
 
 
-def process_dataframe(table_name: str, df: pd.DataFrame):
+def process_dataframe(table_name_param: str, df: pd.DataFrame):
+    global current_column_name, table_name, conversion_flag
+    table_name = table_name_param
+    conversion_flag = False
     for col_name in df.keys().values:
         current_dtype = df[col_name].dtype
         current_first_item = _get_first_item(df, col_name)
         current_item_type = type(current_first_item)
-        #>>> Test
-        print(f"DJ: current column name={col_name}")
-        print(f"DJ: current column df[col_name]={df[col_name]}")
-        print(f"DJ: current_dtype={current_dtype}")
-        print(f"DJ: current_first_item={current_first_item}")
-        print(f"DJ: current_item_type={current_item_type}")
-        #<<< Test
 
         processed_col_name = schemas.find_column_renaming(table_name, col_name)
         schema_of_this_column = schemas.get_table_column_schema(table_name, col_name)
-        print(f"DJ: processed_col_name={processed_col_name}")
-        print(f"DJ: schema_of_this_column={schema_of_this_column}")
 
         if not processed_col_name and not schema_of_this_column:
             # new column, process it and append schema
@@ -226,8 +226,8 @@ def process_dataframe(table_name: str, df: pd.DataFrame):
             df.rename(columns={col_name: processed_col_name}, inplace=True)
             col_name = processed_col_name
 
-        # schema_of_this_colum should always exists at this point
-        # existing column or new column with schema appended, process accroding to schema_of_this_colum
+        # schema_of_this_column should always exists at this point
+        # existing column or new column with schema appended, process according to schema_of_this_column
         #if current_item_type != schema_of_this_column[TYPE_KEY]:
         expected_type = schema_of_this_column[TYPE_KEY]
         for item in df[col_name]:
@@ -238,16 +238,13 @@ def process_dataframe(table_name: str, df: pd.DataFrame):
                 conversion_fcn = TYPE_TO_CONVERT_FUNCTION_MAP.get(
                     expected_type, do_nothing
                 )
-                print(f"DJ: conversiondifferent_fcn={conversion_fcn}")
-                df[col_name] = df[col_name].apply(conversion_fcn)
-                #df[col_name][item]=df[col_name][item].apply(conversion_fcn) 
-                #print(f"DJ: New item={item}")
-                print(f"DJ: df[col_name]={df[col_name]}")
-                #print(f"DJ: New type(item)={type(df[col_name])}")
-                print(f"DJ: New df[col_name].dtype={df[col_name].dtype}")
-                break
-        for index, item in enumerate(df[col_name]):
-            print(f"Row {index}: Value={item}, Type={type(item)}")
+                
+            # Set the current column name for logging
+            current_column_name = col_name
+            df[col_name] = df[col_name].apply(conversion_fcn)
+            break
+        # for index, item in enumerate(df[col_name]):
+            # print(f"Row {index}: Value={item}, Type={type(item)}")
             
         current_dtype = df[col_name].dtype
         logger.debug(f"current_dtype={current_dtype}")
@@ -265,3 +262,9 @@ def process_dataframe(table_name: str, df: pd.DataFrame):
                     f"An {e.__class__.__name__} was caught when trying to convert "
                     + f"the dtype of the column {col_name} from {current_dtype} to {schema_of_this_column[DTYPE_KEY]}"
                 )
+    
+    # Check if conversion log file exists before pushing
+    print("conversion_flag: ", conversion_flag)
+    conversion_log_path = os.path.join(get_table_dir(table_name), CONVERSION_LOG_FILE_NAME)
+    if os.path.exists(conversion_log_path) and conversion_flag:
+        push_file_to_lz(conversion_log_path, table_name)

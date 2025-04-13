@@ -83,7 +83,7 @@ def mirror():
     for collection_name in collection_list:
     #>>># changes to write metadata.json a the first file - 6Mar2025
         metadata_file_exists = read_from_file(
-            collection_name, METADATA_FILE_NAME, FileType.PICKLE
+            collection_name, METADATA_FILE_NAME, FileType.TEXT
         )
         if not metadata_file_exists: 
             metadata_json_path = os.path.join(
