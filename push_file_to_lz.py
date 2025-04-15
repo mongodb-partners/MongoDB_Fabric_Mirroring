@@ -100,17 +100,8 @@ def __patch_file(access_token, file_path, lz_url, table_name):
 
         token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
         logger.debug("creating file in lake")
-        # conversion_file_exists = False
 
-        # # Check if the file already exists in the lakehouse
-        # if file_name == constants.CONVERSION_LOG_FILE_NAME:
-        #     response_code = get_file_from_lz(table_name, file_name) 
-        #     if response_code == 200:
-        #         logger.debug(f"File {file_name} already exists in lakehouse.")
-        #         conversion_file_exists = True
-
-        # if not conversion_file_exists or file_name != constants.CONVERSION_LOG_FILE_NAME:
-            # Code to create file in lakehouse
+        # Code to create file in lakehouse
         response = requests.put(token_url_temp, data={}, headers=token_headers)
         logger.debug(response)
 
@@ -123,7 +114,6 @@ def __patch_file(access_token, file_path, lz_url, table_name):
         logger.debug(token_url_temp)    
         logger.debug("pushing data to file in lake")
 
-        # file_path = file_name
         # Code to push Data to Lakehouse
         with open(file_path, "rb") as file:
             file_contents = file.read()
@@ -141,30 +131,6 @@ def __patch_file(access_token, file_path, lz_url, table_name):
     except Exception as e:
         logger.error(f"Error patching file to landing zone: {str(e)}")
         raise
-
-
-# def get_file_from_lz(table_name, file_name):
-#     logger.info(
-#         f"trying to get file from lz. table_name={table_name}, file_name={file_name}"
-#     )
-#     access_token = __get_access_token(
-#         os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID")
-#     )
-#     token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
-#     url = os.getenv("LZ_URL") + table_name + "/" + file_name
-#     response = requests.get(url, headers=token_headers)
-#     response_status_code = response.status_code
-#     if response_status_code != 200:
-#         logger.warning(
-#             f"failed to get file from Landing Zone. Server responded with code {response_status_code}"
-#         )
-#         return None
-#     local_file_path = os.path.join(utils.get_table_dir(table_name), file_name)
-#     # Commented out to stop re-write
-#     # with open(local_file_path, "wb") as local_file:
-#     #     for chunk in response.iter_content():
-#     #         local_file.write(chunk)
-#     return response_status_code
 
 
 def get_file_from_lz(table_name, file_name):
