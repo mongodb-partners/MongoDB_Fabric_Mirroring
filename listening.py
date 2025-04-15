@@ -29,7 +29,6 @@ from init_sync import init_sync
 import schemas
 import schema_utils
 from file_utils import FileType, read_from_file, write_to_file
-semaphore = threading.Semaphore(1)
 
 def listening(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
