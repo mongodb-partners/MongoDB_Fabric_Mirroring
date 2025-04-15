@@ -5,7 +5,7 @@ import pymongo
 import pandas as pd
 import numpy as np
 import pickle
-
+import bson
 from push_file_to_lz import push_file_to_lz
 from utils import get_table_dir
 from constants import (
@@ -70,7 +70,9 @@ def to_numpy_bool(obj) -> np.bool_:
 
 
 def to_numpy_float64(obj) -> np.float64:
-    return _converter_template(obj, "numpy.float64", np.float64(obj)) #lambda o: np.float64(o) if o is not None else np.nan)
+    if isinstance(obj, bson.Decimal128):
+        obj = str(obj)
+    return _converter_template(obj, "numpy.float64", lambda o: np.float64(o) if o is not None else None)
 
 
 def to_pandas_timestamp(obj) -> pd.Timestamp:
@@ -83,6 +85,9 @@ def do_nothing(obj):
     logger.info(f'Did not convert "{obj}" of type {original_type}.')
     return obj
 
+# for column in expected_columns:
+#     if column not in df.columns:
+#         df[column] = None  # or another appropriate default value
 
 TYPE_TO_CONVERT_FUNCTION_MAP = {
     str: to_string,
@@ -90,6 +95,7 @@ TYPE_TO_CONVERT_FUNCTION_MAP = {
     np.bool_: to_numpy_bool,
     np.float64: to_numpy_float64,
     pd.Timestamp: to_pandas_timestamp,
+    bson.Decimal128: to_numpy_float64,
 }
 
 COLUMN_DTYPE_CONVERSION_MAP = {
@@ -257,6 +263,7 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
                     f"different column dtype detected: current_dtype={current_dtype}, item type from schema={schema_of_this_column[DTYPE_KEY]}"
                 )
                 df[col_name] = df[col_name].astype(schema_of_this_column[DTYPE_KEY])
+                
             except (ValueError, TypeError) as e:
                 logger.warning(
                     f"An {e.__class__.__name__} was caught when trying to convert "
