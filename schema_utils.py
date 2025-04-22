@@ -1,10 +1,12 @@
 import os
 import logging
 from types import NoneType
+import bson.int64
 import pymongo
 import pandas as pd
 import numpy as np
 import pickle
+# from bson import Decimal128, int64
 import bson
 from push_file_to_lz import push_file_to_lz
 from utils import get_table_dir
@@ -14,7 +16,7 @@ from constants import (
     TYPE_KEY,
     DTYPE_KEY,
     TYPES_TO_CONVERT_TO_STR,
-    COLUMN_RENAMING_FILE_NAME,
+    COLUMN_RENAMING_FILE_NAME
 )
 import schemas
 from file_utils import FileType, append_to_file, read_from_file
@@ -23,7 +25,8 @@ from file_utils import FileType, append_to_file, read_from_file
 logger = logging.getLogger(f"{__name__}")
 
 def _converter_template(obj, type_name, raw_convert_func, default_value=None):
-    original_type = type(obj)
+    original_type = type(obj) 
+    logger.debug(f"Converting {obj} of type {original_type} to {type_name}.")
     try:
         return raw_convert_func(obj)
     except (ValueError, TypeError):
@@ -47,11 +50,15 @@ def to_string(obj) -> str:
 
 
 def to_numpy_int64(obj) -> np.int64:
+    logger.debug(f"to_numpy_int64: obj={obj}, type={type(obj)}")
     def raw_to_numpy_int64(obj) -> np.int64:
         # there's a rare case that converting a list of int to numpy.int64 won't
         # raise any error, hence covering it here separately
+        if isinstance(obj, bson.Decimal128): 
+            return np.int64(obj.to_decimal())
         if isinstance(obj, list) or isinstance(obj, dict):
             raise ValueError
+        
         return np.int64(obj)
 
     return _converter_template(obj, "numpy.int64", raw_to_numpy_int64)
@@ -92,10 +99,11 @@ def do_nothing(obj):
 TYPE_TO_CONVERT_FUNCTION_MAP = {
     str: to_string,
     np.int64: to_numpy_int64,
+    bson.int64.Int64: to_numpy_int64,
     np.bool_: to_numpy_bool,
     np.float64: to_numpy_float64,
-    pd.Timestamp: to_pandas_timestamp,
     bson.Decimal128: to_numpy_float64,
+    pd.Timestamp: to_pandas_timestamp,
 }
 
 COLUMN_DTYPE_CONVERSION_MAP = {
@@ -104,7 +112,7 @@ COLUMN_DTYPE_CONVERSION_MAP = {
     # nullable fix
     "bool": "boolean",
     # nullable fix
-    "int64": "Int64",
+    "int64": "Int64"
 }
 
 
@@ -133,6 +141,35 @@ def process_column_name(column_name: str) -> str:
     return str(column_name).replace(" ", "_")[:128]
 
 
+def _get_first_valid_id(df: pd.DataFrame, column_name: str):
+    """
+    Get the first non-null item from given DataFrame column.
+    This is useful when reading data in init sync, and a few (or even just one)
+    documents have an extra column, making most items of this column to be null.
+    In this case we really want to find the actual non-null item, and derive
+    data type based on it.
+
+    Args:
+        df (pd.DataFrame): The DataFrame object
+        column_name (str): The name of the column
+
+    Returns:
+        Any: the first non-null item in given DataFrame column
+    """
+    first_valid_index = (
+        df[column_name].first_valid_index() or 0
+    )  # in case of first_valid_index() return None, let it be zero
+    # first_valid_item = df[column_name][first_valid_index]
+    first_valid_index_id = df['_id'][first_valid_index]
+    # logger.debug(
+    #     f"get first item {first_valid_index_id} of type {type(first_valid_index)} in column {column_name}"
+    # )
+    # logger.debug(
+    #     f"get first item {first_valid_item} of type {type(first_valid_item)} in column {column_name}"
+    # )
+    # return first_valid_item
+    return first_valid_index_id
+
 def _get_first_item(df: pd.DataFrame, column_name: str):
     """
     Get the first non-null item from given DataFrame column.
@@ -157,7 +194,6 @@ def _get_first_item(df: pd.DataFrame, column_name: str):
     )
     return first_valid_item
 
-
 def init_table_schema(table_name: str):
     # determine if the internal schema file exist
     table_dir = get_table_dir(table_name)
@@ -180,15 +216,28 @@ def init_table_schema(table_name: str):
         # else, init schema from collection
         client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
         db = client[os.getenv("MONGO_DB_NAME")]
+        batch_size = int(os.getenv("INIT_LOAD_BATCH_SIZE"))
         collection = db[table_name]
         schema_of_this_table = {}
         column_renaming_of_this_table = {}
-        with collection.find().sort({"_id": 1}).limit(1) as cursor:
-            df = pd.DataFrame(list(cursor))
+        with collection.find().sort({"_id": 1}).limit(batch_size) as cursor:
+            fetched_data = list(cursor)
+            print(f"fetched_data: {fetched_data}")
+            df = pd.DataFrame(fetched_data)
             for col_name in df.keys().values:
-                first_item = _get_first_item(df, col_name)
+                get_id = _get_first_valid_id(df, col_name)
+                # Fetch the exact value from mongodb using the _id, dumping into df changes the data type.
+                # projection = {col_name: 1, "_id": 0} if col_name != "_id" else {"_id": 1}
+                # data = list(collection.find({"_id": get_id}, (projection)))[0].get(col_name)
+                # logger.debug(
+                #     f"get first item {data} of type {type(data)} in column {col_name}"
+                # )
+                data = next(item.get(col_name) for item in fetched_data if item.get('_id') == get_id)
+                logger.debug(f"get first item {data} of type {type(data)} in column {col_name}")
                 column_dtype = df[col_name].dtype
-                schema_of_this_column = init_column_schema(column_dtype, first_item)
+                # column_dtype = type(data)
+                # schema_of_this_column = init_column_schema(column_dtype, first_item)
+                schema_of_this_column = init_column_schema(column_dtype, data)
                 processed_col_name = process_column_name(col_name)
                 if processed_col_name != col_name:
                     column_renaming_of_this_table[col_name] = processed_col_name
@@ -205,6 +254,7 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
         current_dtype = df[col_name].dtype
         current_first_item = _get_first_item(df, col_name)
         current_item_type = type(current_first_item)
+        
 
         processed_col_name = schemas.find_column_renaming(table_name, col_name)
         schema_of_this_column = schemas.get_table_column_schema(table_name, col_name)
@@ -248,6 +298,7 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
             # Set the current column name for logging
             current_column_name = col_name
             df[col_name] = df[col_name].apply(conversion_fcn)
+            print(df[col_name])
             break
         # for index, item in enumerate(df[col_name]):
             # print(f"Row {index}: Value={item}, Type={type(item)}")
@@ -257,12 +308,21 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
         logger.debug(
             f"schema_of_this_column[DTYPE_KEY]={schema_of_this_column[DTYPE_KEY]}"
         )
+
+        if expected_type == bson.int64.Int64 and current_dtype == "float64":
+            # Convert to int64
+            logger.debug(
+                f"Converting column {col_name} from float64 to Int64"
+            )   
+            df[col_name] = df[col_name].astype("Int64")
+
         if current_dtype != schema_of_this_column[DTYPE_KEY]:
             try:
                 logger.debug(
                     f"different column dtype detected: current_dtype={current_dtype}, item type from schema={schema_of_this_column[DTYPE_KEY]}"
                 )
                 df[col_name] = df[col_name].astype(schema_of_this_column[DTYPE_KEY])
+                
                 
             except (ValueError, TypeError) as e:
                 logger.warning(
