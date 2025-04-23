@@ -46,7 +46,7 @@ def _converter_template(obj, type_name, raw_convert_func, default_value=None):
 
 def to_string(obj) -> str:
     return _converter_template(
-        obj, "string", lambda o: str(o) if o is not None else None
+        obj, "string", lambda o: str(o) if o is not None and not pd.isna(o) else None
     )
 
 
@@ -59,8 +59,10 @@ def to_numpy_int64(obj) -> np.int64:
             return np.int64(obj.to_decimal())
         if isinstance(obj, list) or isinstance(obj, dict):
             raise ValueError
-        
-        return np.int64(obj)
+        if obj is not None and not pd.isna(obj):
+           return np.int64(obj)
+        else:
+            return None
 
     return _converter_template(obj, "numpy.int64", raw_to_numpy_int64)
 
@@ -80,12 +82,12 @@ def to_numpy_bool(obj) -> np.bool_:
 def to_numpy_float64(obj) -> np.float64:
     if isinstance(obj, bson.Decimal128):
         obj = str(obj)
-    return _converter_template(obj, "numpy.float64", lambda o: np.float64(o) if o is not None else None)
+    return _converter_template(obj, "numpy.float64", lambda o: np.float64(o) if o is not None and not pd.isna(o) else None)
 
 
 def to_pandas_timestamp(obj) -> pd.Timestamp:
     # return _converter_template(obj, "pandas.Timestamp", lambda o: pd.Timestamp(o))
-    return _converter_template(obj, "pandas.Timestamp", lambda o: pd.to_datetime(o, utc=True) if o is not None else None)
+    return _converter_template(obj, "pandas.Timestamp", lambda o: pd.to_datetime(o, utc=True) if o is not None and not pd.isna(o) else None)
 
 
 def do_nothing(obj):
@@ -317,25 +319,30 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
             f"schema_of_this_column[DTYPE_KEY]={schema_of_this_column[DTYPE_KEY]}"
         )
 
-        if expected_type == bson.int64.Int64 and current_dtype == "float64":
+        if (expected_type == bson.int64.Int64 or expected_type == int) and current_dtype == "float64":
             # Convert to int64
             logger.debug(
                 f"Converting column {col_name} from float64 to Int64"
             )   
             df[col_name] = df[col_name].astype("Int64")
 
-        if current_dtype != schema_of_this_column[DTYPE_KEY]:
+        current_dtype = df[col_name].dtype
+        #if current_dtype != schema_of_this_column[DTYPE_KEY]:
+        print(f">>>>>>>>>>current_dtype: {current_dtype}")
+        DEFAULT_DTYPE = "default_dtype"  # Define a default value for missing keys
+        column_final_dtype = COLUMN_DTYPE_CONVERSION_MAP.get(current_dtype.__str__(), DEFAULT_DTYPE)
+        print(f">>>>>>>>>>current_final_dtype: {column_final_dtype}")
+        if column_final_dtype != DEFAULT_DTYPE:
             try:
                 logger.debug(
-                    f"different column dtype detected: current_dtype={current_dtype}, item type from schema={schema_of_this_column[DTYPE_KEY]}"
+                    f"different column dtype detected: current_dtype={current_dtype}, item type from schema={column_final_dtype}"
                 )
-                df[col_name] = df[col_name].astype(schema_of_this_column[DTYPE_KEY])
-                
-                
+                df[col_name] = df[col_name].astype(column_final_dtype)
+                    
             except (ValueError, TypeError) as e:
                 logger.warning(
                     f"An {e.__class__.__name__} was caught when trying to convert "
-                    + f"the dtype of the column {col_name} from {current_dtype} to {schema_of_this_column[DTYPE_KEY]}"
+                    + f"the dtype of the column {col_name} from {current_dtype} to {column_final_dtype}"
                 )
     
     # Check if conversion log file exists before pushing
