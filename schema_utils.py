@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import logging
 from types import NoneType
@@ -98,12 +99,19 @@ def do_nothing(obj):
 
 TYPE_TO_CONVERT_FUNCTION_MAP = {
     str: to_string,
+    int: to_numpy_int64,
+    float: to_numpy_float64,
+    bool: to_numpy_bool,
+    datetime: to_pandas_timestamp,
+    bson.ObjectId: to_string,
+    bson.Decimal128: to_numpy_float64,
+    np.int32: to_numpy_int64,
     np.int64: to_numpy_int64,
     bson.int64.Int64: to_numpy_int64,
     np.bool_: to_numpy_bool,
     np.float64: to_numpy_float64,
     bson.Decimal128: to_numpy_float64,
-    pd.Timestamp: to_pandas_timestamp,
+    pd.Timestamp: to_pandas_timestamp   
 }
 
 COLUMN_DTYPE_CONVERSION_MAP = {
@@ -287,7 +295,8 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
         #if current_item_type != schema_of_this_column[TYPE_KEY]:
         expected_type = schema_of_this_column[TYPE_KEY]
         for item in df[col_name]:
-            if not isinstance(type(item), expected_type):
+            current_column_name = col_name
+            if not isinstance(item, expected_type):
                 logger.debug(
                     f" item type detected: current item is {item} of type={type(item)}, expected item type from schema= {expected_type}"
                 )
@@ -295,11 +304,10 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
                     expected_type, do_nothing
                 )
                 
-            # Set the current column name for logging
-            current_column_name = col_name
-            df[col_name] = df[col_name].apply(conversion_fcn)
-            print(df[col_name])
-            break
+                # Set the current column name for logging
+                df[col_name] = df[col_name].apply(conversion_fcn)
+                print(df[col_name])
+                break
         # for index, item in enumerate(df[col_name]):
             # print(f"Row {index}: Value={item}, Type={type(item)}")
             
