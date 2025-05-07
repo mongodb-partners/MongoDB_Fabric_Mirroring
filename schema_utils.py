@@ -21,6 +21,12 @@ from constants import (
 )
 import schemas
 from file_utils import FileType, append_to_file, read_from_file
+from pandas.api.types import (
+    is_numeric_dtype,
+    is_string_dtype,
+    is_object_dtype,
+    is_datetime64_any_dtype
+)
 
 
 logger = logging.getLogger(f"{__name__}")
@@ -46,7 +52,9 @@ def _converter_template(obj, type_name, raw_convert_func, default_value=None):
 
 def to_string(obj) -> str:
     return _converter_template(
-        obj, "string", lambda o: str(o) if o is not None and not pd.isna(o) else None
+#        obj, "string", lambda o: str(o) if o is not None and not pd.isna(o) else None
+# Force convert to string as otherwise it will be Binary if values are NULL
+        obj, "string", lambda o: str(o)
     )
 
 
@@ -112,7 +120,6 @@ TYPE_TO_CONVERT_FUNCTION_MAP = {
     bson.int64.Int64: to_numpy_int64,
     np.bool_: to_numpy_bool,
     np.float64: to_numpy_float64,
-    bson.Decimal128: to_numpy_float64,
     pd.Timestamp: to_pandas_timestamp   
 }
 
@@ -136,7 +143,12 @@ def init_column_schema(column_dtype, first_item) -> dict:
     # if item_type is None:
         item_type = str
         column_dtype = "object"
-
+    #Diana - handling bson.Decimal128 cant be target data type as it cant be written to parquet
+    if isinstance(first_item, bson.Decimal128):
+        item_type = float
+    #It takes column dtype as object otherwise     
+    #    column_dtype = "object"
+        column_dtype = "float64"
     #Diana 107 comment and prints added
     # if not column_dtype:
     #print(f"SU: original column_dtype={column_dtype}")
@@ -144,6 +156,9 @@ def init_column_schema(column_dtype, first_item) -> dict:
     #print(f"SU: converted column_dtype={column_dtype}")
     schema_of_this_column[DTYPE_KEY] = column_dtype
     schema_of_this_column[TYPE_KEY] = item_type
+    logger.debug(
+        f"Internal schema file : column_dtype {column_dtype} and item_type {item_type}"
+    )
     return schema_of_this_column
 
 
@@ -207,7 +222,7 @@ def _get_first_item(df: pd.DataFrame, column_name: str):
 def init_table_schema(table_name: str):
     # determine if the internal schema file exist
     table_dir = get_table_dir(table_name)
-    schema_file_path = os.path.join(table_dir, INTERNAL_SCHEMA_FILE_NAME)
+    #schema_file_path = os.path.join(table_dir, INTERNAL_SCHEMA_FILE_NAME)
     schema_of_this_table = read_from_file(
         table_name, INTERNAL_SCHEMA_FILE_NAME, FileType.PICKLE
     )
@@ -232,7 +247,7 @@ def init_table_schema(table_name: str):
         column_renaming_of_this_table = {}
         with collection.find().sort({"_id": 1}).limit(batch_size) as cursor:
             fetched_data = list(cursor)
-            print(f"fetched_data: {fetched_data}")
+            #print(f"fetched_data: {fetched_data}")
             df = pd.DataFrame(fetched_data)
             for col_name in df.keys().values:
                 get_id = _get_first_valid_id(df, col_name)
@@ -263,7 +278,7 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
     for col_name in df.keys().values:
         current_dtype = df[col_name].dtype
         current_first_item = _get_first_item(df, col_name)
-        current_item_type = type(current_first_item)
+        #current_item_type = type(current_first_item)
         
 
         processed_col_name = schemas.find_column_renaming(table_name, col_name)
@@ -328,23 +343,50 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
 
         current_dtype = df[col_name].dtype
         #if current_dtype != schema_of_this_column[DTYPE_KEY]:
-        print(f">>>>>>>>>>current_dtype: {current_dtype}")
-        DEFAULT_DTYPE = "default_dtype"  # Define a default value for missing keys
-        column_final_dtype = COLUMN_DTYPE_CONVERSION_MAP.get(current_dtype.__str__(), DEFAULT_DTYPE)
-        print(f">>>>>>>>>>current_final_dtype: {column_final_dtype}")
-        if column_final_dtype != DEFAULT_DTYPE:
+        logger.debug(
+            f">>>>>>>>>>current_dtype: {current_dtype}"
+            )
+        ##column_final_dtype = COLUMN_DTYPE_CONVERSION_MAP.get(current_dtype.__str__(), DEFAULT_DTYPE)
+        # Date type needs to be converted to MILLIS from NANOS in all cases
+        if is_datetime64_any_dtype(df[col_name]):
             try:
                 logger.debug(
-                    f"different column dtype detected: current_dtype={current_dtype}, item type from schema={column_final_dtype}"
+                    f"different column dtype detected: current_dtype={current_dtype}, item type from default=datetime64[ms]"
                 )
-                df[col_name] = df[col_name].astype(column_final_dtype)
-                    
+                #df[col_name] = df[col_name].dt.floor('ms')
+                df[col_name] = df[col_name].dt.tz_localize(None)
+                df[col_name] = df[col_name].astype("datetime64[ms]")      
             except (ValueError, TypeError) as e:
                 logger.warning(
                     f"An {e.__class__.__name__} was caught when trying to convert "
-                    + f"the dtype of the column {col_name} from {current_dtype} to {column_final_dtype}"
+                    + f"the dtype of the column {col_name} from {current_dtype} to datetime64[ms]"
                 )
-    
+        
+        current_dtype = df[col_name].dtype
+        #if current_dtype != schema_of_this_column[DTYPE_KEY]:
+        logger.debug(
+            f">>>>>>>>>>current_dtype 1: {current_dtype}, "
+            f">>>>>>>>>>schema_of_this_column[DTYPE_KEY] 1: {schema_of_this_column[DTYPE_KEY]}, "
+            f"****is_datetime64_any_dtype(df['col_name']): {is_datetime64_any_dtype(df[col_name])}, "
+            f"****is_object_dtype(schema_of_this_column[DTYPE_KEY]): {is_object_dtype(schema_of_this_column[DTYPE_KEY])}"
+            )
+        ##if current_dtype == datetime and schema_of_this_column[DTYPE_KEY] == object:
+        #print(f"****is_datetime64_any_dtype(df['col_name']): {is_datetime64_any_dtype(df[col_name])}")
+        #print(f"****is_object_dtype(schema_of_this_column[DTYPE_KEY]): {is_object_dtype(schema_of_this_column[DTYPE_KEY])}")
+        if is_datetime64_any_dtype(df[col_name]) and is_object_dtype(schema_of_this_column[DTYPE_KEY]):
+            do_nothing
+        elif current_dtype.__str__() != schema_of_this_column[DTYPE_KEY].__str__():
+            try:
+                logger.debug(
+                    f"different column dtype detected1: current_dtype={current_dtype}, item type from schema 1 ={schema_of_this_column[DTYPE_KEY]}"
+                )
+                df[col_name] = df[col_name].astype(schema_of_this_column[DTYPE_KEY])
+                
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    f"An {e.__class__.__name__} was caught when trying to convert "
+                    + f"the dtype of the column {col_name} from {current_dtype} to {schema_of_this_column[DTYPE_KEY]}"
+                )  
     # Check if conversion log file exists before pushing
     print("conversion_flag: ", conversion_flag)
     conversion_log_path = os.path.join(get_table_dir(table_name), CONVERSION_LOG_FILE_NAME)
