@@ -1,6 +1,10 @@
 __pycache__/
 .venv/
 .env
+venv
 .vscode/
 data_files/
 *.log
+*.log.1
+*.log.*
+*.ipynb

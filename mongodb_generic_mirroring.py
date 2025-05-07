@@ -10,7 +10,11 @@ import json
 from init_sync import init_sync
 from listening import listening
 from schema_utils import init_table_schema
-
+from constants import (
+    METADATA_FILE_NAME,
+)
+from push_file_to_lz import push_file_to_lz
+from file_utils import FileType, read_from_file
 
 def mirror():
     load_dotenv()
@@ -77,6 +81,16 @@ def mirror():
         logger.warning(f"removed non-exists collection {non_exists_collection}")
 
     for collection_name in collection_list:
+    #>>># changes to write metadata.json a the first file - 6Mar2025
+        metadata_file_exists = read_from_file(
+            collection_name, METADATA_FILE_NAME, FileType.TEXT
+        )
+        if not metadata_file_exists: 
+            metadata_json_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), METADATA_FILE_NAME
+                )
+            logger.info("writing metadata file to LZ")
+            push_file_to_lz(metadata_json_path, collection_name)
 
         init_table_schema(collection_name)
 
@@ -103,6 +117,7 @@ def __get_all_collections() -> list[str]:
     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
     # check database existence
     db_name = os.getenv("MONGO_DB_NAME")
+    print(f"db_name={db_name}")
     try:
         all_db_names = client.list_database_names()
         if db_name not in all_db_names:

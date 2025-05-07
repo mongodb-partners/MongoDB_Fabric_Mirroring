@@ -1,3 +1,4 @@
+import pprint
 import pymongo
 from pymongo.collection import Collection
 import time
@@ -6,8 +7,9 @@ import pandas as pd
 import shutil
 import logging
 import glob
-from bson import ObjectId
+from bson import ObjectId, Decimal128
 import pickle
+import numpy as np
 
 from constants import (
     TYPES_TO_CONVERT_TO_STR,
@@ -137,6 +139,7 @@ def init_sync(collection_name: str):
 
         read_start_time = time.time()
         batch_df = pd.DataFrame(list(batch_cursor))
+
         read_end_time = time.time()
         if enable_perf_timer:
             logger.info(f"TIME: read took {read_end_time-read_start_time:.2f} seconds")
@@ -171,17 +174,21 @@ def init_sync(collection_name: str):
         parquet_full_path_filename = get_parquet_full_path_filename(collection_name, last_parquet_file_num)
         
         logger.info(f"writing parquet file: {parquet_full_path_filename}")
+
         batch_df.to_parquet(parquet_full_path_filename, index=False)
-        write_end_time = time.time()
+        # os.remove("temp.csv")
+        write_end_time = time.time()    
         if enable_perf_timer:
             logger.info(f"TIME: write took {write_end_time-trans_end_time:.2f} seconds")
-        if not last_id:
+            
+    #>>># changes to remove write metadata.json here as it will now be written as the first file in mongodb_generic_mirroring.py - 6Mar2025
+ #      if not last_id:
             # do not copy, but send the template file directly
-            metadata_json_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), METADATA_FILE_NAME
-            )
-            logger.info("writing metadata file to LZ")
-            push_file_to_lz(metadata_json_path, collection_name)
+            # metadata_json_path = os.path.join(
+            #     os.path.dirname(os.path.abspath(__file__)), METADATA_FILE_NAME
+            # )
+            # logger.info("writing metadata file to LZ")
+            # push_file_to_lz(metadata_json_path, collection_name)
         # write the current batch to LZ
         push_start_time = time.time()
         logger.info("writing parquet file to LZ")
@@ -205,6 +212,8 @@ def init_sync(collection_name: str):
             LAST_PARQUET_FILE_NUMBER,
             FileType.PICKLE,
         )
+        #>>># added sleep to ensure that Fabric picks up one file at a time - 14Mar2025
+        time.sleep(30)
 
     # delete last_id file, as init sync is complete
     logger.info("removing the last_id file")
