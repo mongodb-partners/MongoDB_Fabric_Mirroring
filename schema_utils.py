@@ -283,8 +283,13 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
 
         processed_col_name = schemas.find_column_renaming(table_name, col_name)
         schema_of_this_column = schemas.get_table_column_schema(table_name, col_name)
-
+        logger.debug(
+                    f"%%%% In process_df: schema_of_this_column is {schema_of_this_column} %%%%%"
+                )
         if not processed_col_name and not schema_of_this_column:
+            logger.debug(
+                    f"%%%% In process_df, schema of col doesnt exist: schema_of_this_column is {schema_of_this_column} and processed_col_name is {processed_col_name} %%%%%"
+                )
             # new column, process it and append schema
             schema_of_this_column = init_column_schema(
                 current_dtype, current_first_item
