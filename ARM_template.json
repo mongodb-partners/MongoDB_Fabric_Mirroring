@@ -91,7 +91,17 @@
             "metadata": {
                 "description": "Time interval (in secs), incremental sync waits before replicating accumulated changes when next event occurs"
             }
-        }    
+        },
+        "OwnerTag":{
+			"defaultValue": "your_username",
+			"type":"string",
+			"metadata": {"description": "Owner tag for the resource"}
+		},
+		"KeepUntilTag":{
+			"defaultValue": "2025-12-30",
+			"type": "string",
+			"metadata": {"Description": "Date to keep the resource running"}
+		}    
     },
     "variables": {
         "appServicePlanPortalName": "[format('AppServicePlan-{0}', parameters('webAppName'))]"

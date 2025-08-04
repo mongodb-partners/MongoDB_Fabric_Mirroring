@@ -29,6 +29,12 @@ def init_table_schema(table_name: str, table_schema: dict):
     __locks[table_name] = threading.Lock()
     write_table_schema_to_file(table_name)
 
+# 9 May 2025 when schema file exists no need to rewrite it
+def init_table_schema_to_mem(table_name: str, table_schema: dict):
+    __schemas[table_name] = table_schema
+    __locks[table_name] = threading.Lock()
+#    write_table_schema_to_file(table_name)
+
 
 def get_table_schema(table_name: str) -> dict:
     return __schemas.get(table_name, None)

@@ -1,7 +1,8 @@
 from datetime import datetime
 import os
 import logging
-from types import NoneType
+#17June2025 - doesnt work for 3.9 and lesser Python versions
+#from types import NoneType
 import bson.int64
 import pymongo
 import pandas as pd
@@ -30,6 +31,8 @@ from pandas.api.types import (
 
 
 logger = logging.getLogger(f"{__name__}")
+#17June2025 - added NoneType manually instead of importing from types for 3.9 and lesser Python versions
+NoneType = type(None)
 
 def _converter_template(obj, type_name, raw_convert_func, default_value=None):
     original_type = type(obj) 
@@ -228,7 +231,9 @@ def init_table_schema(table_name: str):
     )
     if schema_of_this_table:
         logger.info(f"loaded schema of {table_name} from file")
-        schemas.init_table_schema(table_name, schema_of_this_table)
+    #    schemas.init_table_schema(table_name, schema_of_this_table)
+    # 9 May 2025 should not write back to internal schema file
+        schemas.init_table_schema_to_mem(table_name, schema_of_this_table)
         # load column renaming if it exists, otherwise this table has been previously
         # initiated but no column is renamed, so we don't need to do anything
         table_column_renaming = read_from_file(
@@ -282,6 +287,9 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
         
 
         processed_col_name = schemas.find_column_renaming(table_name, col_name)
+        logger.debug(
+                    f"%%%% Processed col name found: processed_col_name is {processed_col_name} %%%%%"
+        )
         schema_of_this_column = schemas.get_table_column_schema(table_name, col_name)
         logger.debug(
                     f"%%%% In process_df: schema_of_this_column is {schema_of_this_column} %%%%%"
@@ -311,6 +319,8 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
         if processed_col_name and processed_col_name != col_name:
             df.rename(columns={col_name: processed_col_name}, inplace=True)
             col_name = processed_col_name
+            # May 9 : get schema from file for the renamed column
+            schema_of_this_column = schemas.get_table_column_schema(table_name, col_name)
 
         # schema_of_this_column should always exists at this point
         # existing column or new column with schema appended, process according to schema_of_this_column
