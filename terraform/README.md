@@ -1,7 +1,7 @@
 # MongoDB-Atlas-Mirroring-Terraform
 MongoDB Atlas integration with Microsoft Fabric Mirrored Database.
 
-This Terraform code automates the deployment of [MongoBD Fabric Integration](https://github.com/mongodb-partners/MongoDB_Fabric_Mirroring) solution developed by MongoDB Partners team. The resulting environment will have all resources required to synchronise a MongoDB database and collections with Microsoft Fabric Mirrored Database, allowing customers to use the features provided by Microsoft's service with the data stored on MongoDB Atlas.
+This Terraform code automates the deployment of [MongoDB Fabric Integration](https://github.com/mongodb-partners/MongoDB_Fabric_Mirroring) solution developed by MongoDB Partners team. The resulting environment will have all resources required to synchronise a MongoDB database and collections with Microsoft Fabric Mirrored Database, allowing customers to use the features provided by Microsoft's service with the data stored on MongoDB Atlas.
 
 There are two options to deploy the solution; with a private connection between Azure and MongoDB Atlas, and with public internet communication between the services. The former option will incur in additional costs due to the Azure SKU required for isolated environment, and the latter can be deployed using Free tier SKU.
 
