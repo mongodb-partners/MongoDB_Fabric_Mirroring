@@ -1,0 +1,13 @@
+mongodbatlas_public_key         = "<mongodb_atlas_public>key>"
+mongodbatlas_private_key        = "<mongodb_atlas_private_key>"
+mongodbatlas_group_id           = "<mongodb_atlas_project_id>"
+mongodbatlas_clustername        = "<mongodb_atlas_cluster_name>"
+mongodbatlas_dbName             = "<mongodb_atlas_collection_name>"
+mongodbatlas_userpass           = "<mongodb_atlas_database_username>:<mongodb_atlas_database_password>"
+owner_tag                       = "<user_identification>"
+subscription_id                 = "<azure_subscription_id>"
+azure_region                    = "<azure_region_name>"
+azure_vault_name                = ""
+fabric_capacity_sku             = "<fabric_sku_id>"
+# deployPrivateEnvironment        = false
+# azure_sku_name                  = "F1"
