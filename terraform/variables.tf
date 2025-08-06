@@ -26,7 +26,9 @@ variable "mongodbatlas_userpass"{
 variable "owner_tag" {
 
 }
+variable "keep_until" {
 
+}
 variable "subscription_id" { 
 
 }

@@ -1,3 +1,10 @@
+resource "random_string" "random_suffix" {
+  length  = 5
+  lower   = true
+  numeric = true
+  special = false
+  upper   = false
+}
 resource "azurerm_resource_group" "mongodb-atlas-fabric-resourceGroup" {
   name = "mongodb-atlas-fabric-resourceGroup"
   location = var.azure_region
@@ -67,7 +74,7 @@ resource "azurerm_subnet" "mongodb-atlas-fabric-webAppSubnet" {
 }
 
 resource "azurerm_app_service_environment_v3" "mongodb-atlas-fabric-appServiceEnv" {
-  name = "mongodb-atlas-fabric-asev3"
+  name = "mongodb-atlas-fabric-asev3-${random_string.random_suffix.result}"
   resource_group_name = azurerm_resource_group.mongodb-atlas-fabric-resourceGroup.name
   subnet_id = azurerm_subnet.mongodb-atlas-fabric-subnet1[0].id
   tags = {
@@ -81,7 +88,7 @@ resource "azurerm_app_service_environment_v3" "mongodb-atlas-fabric-appServiceEn
 }
 //Service plan for App Service Environment and Private Endpoint deployment
 resource "azurerm_service_plan" "mongodb-atlas-fabric-service-plan" {
-  name = "mongodb-atlas-fabric-service-plan"
+  name = "mongodb-atlas-fabric-service-plan-${random_string.random_suffix.result}"
   location = azurerm_resource_group.mongodb-atlas-fabric-resourceGroup.location
   resource_group_name = azurerm_resource_group.mongodb-atlas-fabric-resourceGroup.name
   os_type = "Linux"
@@ -99,7 +106,7 @@ resource "azurerm_service_plan" "mongodb-atlas-fabric-service-plan" {
 
 //Service plan for simple deployment without private endpoint
 resource "azurerm_service_plan" "mongodb-atlas-fabric-service-simple-plan" {
-  name = "mongodb-atlas-fabric-service-plan"
+  name = "mongodb-atlas-fabric-service-plan-${random_string.random_suffix.result}"
   location = azurerm_resource_group.mongodb-atlas-fabric-resourceGroup.location
   resource_group_name = azurerm_resource_group.mongodb-atlas-fabric-resourceGroup.name
   os_type = "Linux"
@@ -114,17 +121,9 @@ resource "azurerm_service_plan" "mongodb-atlas-fabric-service-simple-plan" {
   count = try(var.deployPrivateEnvironment ? 0 : 1, 0)
 }
 
-resource "random_string" "azurerm_key_vault_name" {
-  length  = 13
-  lower   = true
-  numeric = false
-  special = false
-  upper   = false
-}
-
 resource "azurerm_key_vault" "mongodb-atlas-fabric-mirrordb-vault" {
   # name = "mongodbatlasfabricvault3"
-  name = coalesce(var.azure_vault_name, "vault-${random_string.azurerm_key_vault_name.result}")
+  name = coalesce(var.azure_vault_name, "vault-${random_string.random_suffix.result}")
   resource_group_name = azurerm_resource_group.mongodb-atlas-fabric-resourceGroup.name
   sku_name = var.azure_vault_sku_name
   tenant_id = data.azuread_client_config.current.tenant_id
@@ -204,7 +203,6 @@ resource "azurerm_linux_web_app" "mongodb-atlas-fabric-mirrordb-integration-weba
   resource_group_name = azurerm_resource_group.mongodb-atlas-fabric-resourceGroup.name
   location            = azurerm_service_plan.mongodb-atlas-fabric-service-plan[0].location
   service_plan_id     = azurerm_service_plan.mongodb-atlas-fabric-service-plan[0].id
-  # virtual_network_subnet_id = azurerm_subnet.mongodb-atlas-fabric-webAppSubnet.id
   site_config {
     application_stack {
       python_version = "3.12"
@@ -215,7 +213,7 @@ resource "azurerm_linux_web_app" "mongodb-atlas-fabric-mirrordb-integration-weba
   }
   app_settings = {
     "APP_LOG_LEVEL"           = var.applicationLogLevel
-    "MONGO_CONN_STR"          = replace(data.mongodbatlas_advanced_cluster.mongodb-atlas-fabric-integration-connectData.connection_strings[0].private_endpoint[0].srv_connection_string,"mongodb+srv://","mongodb+srv://${var.mongodbatlas_userpass}@")
+    "MONGO_CONN_STR"          = replace(data.mongodbatlas_advanced_cluster.mongodb-atlas-fabric-integration-connectData[0].connection_strings[0].private_endpoint[0].srv_connection_string,"mongodb+srv://","mongodb+srv://${var.mongodbatlas_userpass}@")
     "MONGO_DB_NAME"           = var.mongodbatlas_dbName
     "MONGO_COLLECTION"        = var.mongodbatlas_collectionName
     "LZ_URL"                  = replace(fabric_mirrored_database.mongodb-atlas-mirrored-database.properties.onelake_tables_path,"/Tables","/Files/LandingZone/")
@@ -254,7 +252,7 @@ resource "azurerm_linux_web_app" "mongodb-atlas-fabric-mirrordb-integration-simp
   }
   app_settings = {
     "APP_LOG_LEVEL"           = var.applicationLogLevel
-    "MONGO_CONN_STR"          = replace(data.mongodbatlas_advanced_cluster.mongodb-atlas-fabric-integration-connectData.connection_strings[0].standard_srv,"mongodb+srv://","mongodb+srv://${var.mongodbatlas_userpass}@")
+    "MONGO_CONN_STR"          = replace(data.mongodbatlas_advanced_cluster.mongodb-atlas-fabric-integration-connectData-noEndpoint.connection_strings[0].standard_srv,"mongodb+srv://","mongodb+srv://${var.mongodbatlas_userpass}@")
     "MONGO_DB_NAME"           = var.mongodbatlas_dbName
     "MONGO_COLLECTION"        = var.mongodbatlas_collectionName
     "LZ_URL"                  = replace(fabric_mirrored_database.mongodb-atlas-mirrored-database.properties.onelake_tables_path,"/Tables","/Files/LandingZone/")

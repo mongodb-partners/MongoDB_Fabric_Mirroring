@@ -8,3 +8,5 @@ data_files/
 *.log.1
 *.log.*
 *.ipynb
+.DS_Store
+*.tfvars

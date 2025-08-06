@@ -6,7 +6,8 @@ data "fabric_capacity" "mongodb-fabric-capacity" {
 data "mongodbatlas_advanced_cluster" "mongodb-atlas-fabric-integration-connectData" {
   project_id = var.mongodbatlas_group_id
   name = var.mongodbatlas_clustername
-  depends_on = [ azurerm_private_endpoint.mongodb-atlas-fabric-mirrordb-integration-privateEndpoint ]
+  depends_on = [ azurerm_app_service_environment_v3.mongodb-atlas-fabric-appServiceEnv[0] ]
+  count = try(var.deployPrivateEnvironment ? 1 : 0, 0)
 }
 
 data "mongodbatlas_advanced_cluster" "mongodb-atlas-fabric-integration-connectData-noEndpoint" {
