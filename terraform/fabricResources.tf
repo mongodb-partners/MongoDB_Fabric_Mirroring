@@ -1,5 +1,5 @@
 resource "fabric_workspace" "mongodb-atlas-mirrored-db-workspace" {
-    display_name = "MongoDB Atlas Azure Fabric Mirrored Database Integration - ${random_string.random_suffix.result}"
+    display_name = "MongoDB_Atlas_Azure_Fabric_Mirrored_Database_Integration-${random_string.random_suffix.result}"
     identity = {
       type = "SystemAssigned"
     }
