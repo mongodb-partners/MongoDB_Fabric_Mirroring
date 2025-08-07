@@ -26,17 +26,21 @@ MS Fabric provides a 60 days trial for the service. After this period, a [Fabric
 
  The required variables required for the solution deployment are the following:
 ```
-mongodbatlas_public_key         = "<Valid_Public_API_Key>"
-mongodbatlas_private_key        = "<Valid_Private_API_Key>"
-mongodbatlas_group_id           = "<MongoDB_Atlas_Project_ID>"
-mongodbatlas_clustername        = "<MongoDB_Atlas_ClusterName>"
-mongodbatlas_dbName             = "<MongoDB+Atlas_Database_name>"
-mongodbatlas_userpass           = "<DBUser>:<Password>"
-owner_tag                       = "<MongoDB_Username.Lastname>"
-subscription_id                 = "<MongoDB_Azure_Subscrition_ID>"
-azure_region                    = "australiacentral"
+mongodbatlas_public_key         = "<mongodb_atlas_public_key>"
+mongodbatlas_private_key        = "<mongodb_atlas_private_key>"
+mongodbatlas_group_id           = "<mongodb_atlas_project_id>"
+mongodbatlas_clustername        = "<mongodb_atlas_cluster_name>"
+mongodbatlas_dbName             = "<mongodb_atlas_collection_name>"
+mongodbatlas_collectionName     = "all"
+mongodbatlas_userpass           = "<mongodb_atlas_database_username>:<mongodb_atlas_database_password>"
+owner_tag                       = "<user_identification>"
+subscription_id                 = "<azure_subscription_id>"
+azure_region                    = "<azure_region_name>"
 azure_vault_name                = ""
 fabric_capacity_sku             = "<MS-Fabric-Capacity-SKU>"
+initSyncBatchSize               = "100000"
+incrementalSyncBatchSize        = "1000"
+incrementalSyncMaxTimeInterval  = "180"
 ```
 
  - MongoDB Atlas authentication keys as requested in the pre-requisites section
@@ -49,8 +53,9 @@ fabric_capacity_sku             = "<MS-Fabric-Capacity-SKU>"
  - Subscription ID can be obtained by running the `az login` command
  - `azure_vault_name`is optional and uses a random value by default
  - The Fabric Capacity SKU String can be found in Fabric's [Admin portal](https://app.fabric.microsoft.com/admin-portal/capacities/capacitiesList/trial?experience=fabric-developer) page.
+  - The values for `initSyncBatchSize`, `incrementalSyncBatchSize` and `incrementalSyncMaxTimeInterval` can be teaked through these parameters.
 
-Variables can be stored on the `terraform.tfvars` file, or provided when `terraform plan` is executed.
+Variables can be stored on the `terraform.tfvars` file, or provided when `terraform plan` is executed. You can copy the file `terraform_tfvars.example` as `terraform.tfvars` and update the values.
 
 ### Deploying without Secure network communication ###
 
@@ -108,7 +113,7 @@ Run `terraform plan --out plan_name.tfplan`, then `terraform apply "plan_name.tf
 |Microsoft Azure|vault-\[randomid\]|Key vault|
 |Microsoft Azure|mongodb-atlas-fabric-service-plan|App Service plan|
 |Microsoft Azure|mongodbatlasfabricmirrordbsynch|App Service|
-|Microsoft Fabric|MongoDB Atlas Azure Fabric Mirrored Database Integration|Workspace|
+|Microsoft Fabric|MongoDB_Atlas_Azure_Fabric_Mirrored_Database_Integration|Workspace|
 |Microsoft Fabric|MongoDB Atlas - Fabric Mirrored Database|Mirrored Database|
 |Microsoft Fabric|MongoDB Atlas - Fabric Mirrored Database|Semantic model (default)|
 |Microsoft Fabric|MongoDB Atlas - Fabric Mirrored Database|SQL analytics endpoint|
@@ -122,10 +127,12 @@ Run `terraform plan --out plan_name.tfplan`, then `terraform apply "plan_name.tf
 |Microsoft Azure|mongodb-atlas-fabric-resourceGroup|Resource Group|
 |Microsoft Azure|mongodb-atlas-fabric-service-plan|App Service plan|
 |Microsoft Azure|mongodbatlasfabricmirrordbsynch|App Service|
-|Microsoft Fabric|MongoDB Atlas Azure Fabric Mirrored Database Integration|Workspace|
+|Microsoft Fabric|MongoDB_Atlas_Azure_Fabric_Mirrored_Database_Integration|Workspace|
 |Microsoft Fabric|MongoDB Atlas - Fabric Mirrored Database|Mirrored Database|
 |Microsoft Fabric|MongoDB Atlas - Fabric Mirrored Database|Semantic model (default)|
 |Microsoft Fabric|MongoDB Atlas - Fabric Mirrored Database|SQL analytics endpoint|
+
+ Most of the resources will have the `-[random-value]` suffix to avoid conflict in case the solution is deployed in more than one region on Azure.
 
 # Deleting the deployed resources #
 

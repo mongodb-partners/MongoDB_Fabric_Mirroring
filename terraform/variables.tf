@@ -17,7 +17,7 @@ variable "mongodbatlas_dbName" {
 
 }
 variable "mongodbatlas_collectionName" {
-    default = "all"
+    
 }
 variable "mongodbatlas_userpass"{
     //MongoDB database username:password
@@ -26,7 +26,6 @@ variable "mongodbatlas_userpass"{
 variable "owner_tag" {
 
 }
-
 variable "subscription_id" { 
 
 }
@@ -58,17 +57,14 @@ variable "applicationLogLevel" {
 variable "initSyncBatchSize" {
     //Batch size (rows) used for initial sync
     type = string
-    default ="100000"
 }
 variable "incrementalSyncBatchSize" {
     //Batch size (rows) used for incremental sync
     type = string
-    default = "1000"
 }
 variable "incrementalSyncMaxTimeInterval" {
     //Time interval (in secs), incremental sync waits before replicating accumulated changes when next event occurs
     type = string
-    default = "180"
 }
 
 variable "deployPrivateEnvironment" {
