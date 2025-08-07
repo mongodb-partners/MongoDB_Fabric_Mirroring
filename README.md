@@ -6,6 +6,9 @@ It requires two main steps:
 2. Deploy Code to run in an App service using `Deploy to Azure` button below or to a VM by cloning the Git repo and running the `app.py` script.\
 Once started, app will continously keep track of the changes in MongoDB Atlas and replicate them to the MirrorDB created in Step 1.
 
+Follow below steps if you want to create manually using Fabric UI (Step 1) and by one click on "Deploy to Azure" below (Step 2) OR you can use the Terraform template provided in the **"terraform"** folder.
+The Terraform template also provides ability to create a **private connection between the App Service and MongoDB Atlas**.
+
 # Step1: MirrorDB Creation
 To create the MirrorDB, we use the Fabric UI.
 
