@@ -42,7 +42,7 @@ Step 2 is basically executing the ARM template by clicking the `Deploy to Azure`
 
 ## Pre-requisites for Step2:
 1. Keep the MongoDB `Connection uri`, `Database name` and `Collection name` handy for input in ARM template.
-Note you can give multiple collections as an array `[col1, col2]` or can give `all` for all collections in a Database.
+Note you can give multiple collections as an array `["col1", "col2"]` or can give `all` for all collections in a Database.
 2. Install Azure Storage explorer. Connect to Azure Storage by selecting `Attach to a resource` -> `ADLS Gen2 container or directory` -> `Sign in using Oauth`. Select your Azure login id and on next screen give the `Blob container or directory URL` as `https://onelake.blob.fabric.microsoft.com/<workspace name in Fabric>`. Once connected you can see the Workspace under `Storage Accounts` -> `(Attached Containers)` -> `Blob Containers`. Double click your Workspace, you should see the MirrorDB folder. You should also have a `LandingZone` folder within `Files` folder. You can always check for parquet files in this folder which will get replicated to OneLake and shown as tables in OneLake.
    
 ![image](https://github.com/user-attachments/assets/4c2ec669-4164-475a-b56c-b0bd2cadf940)
