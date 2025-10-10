@@ -51,7 +51,7 @@ def _converter_template(obj, type_name, raw_convert_func, default_value=None):
             CONVERSION_LOG_FILE_NAME,
             FileType.TEXT
         )
-        return obj if default_value is None else default_value
+        return default_value
 
 
 def to_string(obj) -> str:
@@ -70,7 +70,7 @@ def to_numpy_int64(obj) -> np.int64:
         if isinstance(obj, bson.Decimal128): 
             return np.int64(obj.to_decimal())
         if isinstance(obj, list) or isinstance(obj, dict):
-            raise to_json_string(obj)
+            return to_json_string(obj)
         if obj is not None and not pd.isna(obj):
            return np.int64(obj)
         else:
