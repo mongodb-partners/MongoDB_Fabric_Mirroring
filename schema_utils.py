@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 import os
 import json
 import logging
@@ -107,17 +107,17 @@ def do_nothing(obj):
     logger.info(f'Did not convert "{obj}" of type {original_type}.')
     return obj
 
+
 def to_datetime_iso(obj) -> str:
-    if not isinstance(obj, datetime):
+    if not isinstance(obj, (date, datetime)):
         return obj
     return _converter_template(obj, "string", lambda o: o.isoformat() if o is not None and not pd.isna(o) else '')
 
 
 def to_json_string(obj) -> str:
     if isinstance(obj, list):
-        return _converter_template(obj, "string", lambda o: json.dumps([ob for ob in o]))
+        return _converter_template(obj, "string", lambda o: json.dumps([ob for ob in o], default=str, cls=CustomJSONEncoder))
     return _converter_template(obj, "string", lambda o: json.dumps(o, default=str, cls=CustomJSONEncoder) if o is not None and not pd.isna(o) else '')
-
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -131,6 +131,7 @@ TYPE_TO_CONVERT_FUNCTION_MAP = {
     int: to_numpy_int64,
     float: to_numpy_float64,
     bool: to_numpy_bool,
+    date: to_datetime_iso,
     datetime: to_datetime_iso,
     bson.ObjectId: to_string,
     bson.Decimal128: to_numpy_float64,
@@ -141,7 +142,8 @@ TYPE_TO_CONVERT_FUNCTION_MAP = {
     np.float64: to_numpy_float64,
     dict: to_json_string,
     list: to_json_string,
-    pd.Timestamp: to_pandas_timestamp
+    pd.Timestamp: to_pandas_timestamp,
+    bson.binary.Binary: do_nothing
 }
 
 COLUMN_DTYPE_CONVERSION_MAP = {
