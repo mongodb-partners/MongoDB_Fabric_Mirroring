@@ -39,7 +39,7 @@ def listening(collection_name: str):
     time_threshold_in_sec = float(os.getenv("TIME_THRESHOLD_IN_SEC"))
     post_init_flush_done = False
 
-    table_dir = get_table_dir(collection_name)
+    # table_dir = get_table_dir(collection_name) #Never used
     resume_token = read_from_file(
         collection_name, DELTA_SYNC_RESUME_TOKEN_FILE_NAME, FileType.PICKLE
     )
@@ -48,100 +48,164 @@ def listening(collection_name: str):
             f"interrupted incremental sync detected, continuing with resume_token={resume_token}"
         )
 
-    client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
+    #MongoDB connection and data info
+    client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"), socketTimeoutMS=40000)
     db = client[db_name]
     collection = db[collection_name]
-    cursor = collection.watch(full_document="updateLookup", resume_after=resume_token)
+
+    #cursor = collection.watch(full_document="updateLookup", resume_after=resume_token, max_await_time_ms=20000)
 
     # use df  - enables variable schemas
     # and consistent as resume_token is updated when file is pushed to LZ
-
     accumulative_df: pd.DataFrame = None
+    init_sync_stat_flag = None
+    last_sync_time: float | None = None
+
     # start init sync after we get cursor from Change Stream
     Thread(target=init_sync, args=(collection_name,)).start()
-
     logger.info(f"start listening to change stream for collection {collection_name}")
-    init_sync_stat_flag = None
-    ##>> enhancement to check time elapsed even if no event comes - no waiting indefinitely for a change
-    #for change in cursor:
-    with cursor as stream:
-        while stream.alive:
-          change = stream.try_next()
-          if change is not None:
-            # init_flag = get_init_flag(collection_name)
-            # with semaphore:
-            if not init_sync_stat_flag == "Y":
-                init_sync_stat_flag = read_from_file(
-                collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
+    
+    # New main loop logic
+    while True:
+        # Build watch options each time we open a new stream
+        watch_kwargs = dict(
+            full_document="updateLookup",
+            max_await_time_ms=20000,
+        )
+        if resume_token:
+            watch_kwargs["resume_after"] = resume_token
+
+        try:
+            with collection.watch(**watch_kwargs) as stream:
+                logger.info(
+                    "opened change stream for %s with resume_token=%s",
+                    collection_name,
+                    resume_token,
                 )
-            # do post init flush if this is the first iteration after init is done
-            #if not init_flag and not post_init_flush_done:
-            if init_sync_stat_flag == "Y" and not post_init_flush_done:
-                __post_init_flush(collection_name, logger)
-                post_init_flush_done = True
-            # logger.debug(type(change))
-            logger.debug("original change from Change Stream:")
-            logger.debug(change)
-            operationType = change["operationType"]
-            if operationType not in CHANGE_STREAM_OPERATION_MAP:
-                logger.error(f"ERROR: unsupported operation found: {operationType}")
-                continue
-            if operationType == "delete":
-                doc: dict = change["documentKey"]
-            else:  # insert or update
-                doc: dict = change["fullDocument"]
-            df = pd.DataFrame([doc])
-            ##>>> added here so that the resume token is updated always for every change
-            resume_token = change["_id"]
-            logger.debug(resume_token)
-            # process df according to internal schema
-            schema_utils.process_dataframe(collection_name, df)
 
-            if not init_sync_stat_flag == "Y":
-                logger.debug(
-                    f"collection {collection_name} still initializing, use UPSERT instead of INSERT"
-                )
-                row_marker_value = CHANGE_STREAM_OPERATION_MAP_WHEN_INIT[operationType]
-            else:
-                row_marker_value = CHANGE_STREAM_OPERATION_MAP[operationType]
-            df.insert(0, ROW_MARKER_COLUMN_NAME, [row_marker_value])
+                # Use try_next so we can flush on time threshold even without new events
+                while True:
+                    change = stream.try_next()
 
+                    if change is None:
+                        # No new events in this await interval; consider time-based flush
+                        if (
+                            accumulative_df is not None
+                            and init_sync_stat_flag == "Y"
+                            and last_sync_time is not None
+                        ):
+                            accumulative_df, last_sync_time = process_accumulative_df(
+                                accumulative_df,
+                                collection_name,
+                                init_sync_stat_flag,
+                                last_sync_time,
+                                time_threshold_in_sec,
+                                resume_token,
+                                logger,
+                            )
+                        continue
 
-            # merge the df to accumulative_df till batch size reached
-            if accumulative_df is not None:
-                accumulative_df = pd.concat([accumulative_df, df], ignore_index=True)
-                logger.info("concat accumulative_df result:")
-                logger.info(accumulative_df)
-            else:
-                logger.info("df created")
-                accumulative_df = df
-                last_sync_time: float = time.time()
-                logger.info(f"last_sync_time when first record added: {last_sync_time}")
+                    # ---- We have a real change document here ----
 
+                    if init_sync_stat_flag != "Y":
+                        init_sync_stat_flag = read_from_file(
+                            collection_name,
+                            INIT_SYNC_STATUS_FILE_NAME,
+                            FileType.PICKLE,
+                        )
 
-            accumulative_df, last_sync_time = process_accumulative_df(
-                accumulative_df, collection_name, init_sync_stat_flag, last_sync_time, time_threshold_in_sec, resume_token, logger
+                    if init_sync_stat_flag == "Y" and not post_init_flush_done:
+                        __post_init_flush(collection_name, logger)
+                        post_init_flush_done = True
+
+                    logger.debug("original change from Change Stream:")
+                    logger.debug(change)
+
+                    operationType = change["operationType"]
+                    if operationType not in CHANGE_STREAM_OPERATION_MAP:
+                        logger.error("ERROR: unsupported operation found: %s", operationType)
+                        continue
+
+                    if operationType == "delete":
+                        doc: dict = change["documentKey"]
+                    else:
+                        doc: dict = change["fullDocument"]
+
+                    df = pd.DataFrame([doc])
+
+                    # Always update resume_token on every processed change
+                    resume_token = change["_id"]
+                    logger.debug("resume_token: %s", resume_token)
+
+                    schema_utils.process_dataframe(collection_name, df)
+
+                    if init_sync_stat_flag != "Y":
+                        logger.debug(
+                            "collection %s still initializing, use UPSERT instead of INSERT",
+                            collection_name,
+                        )
+                        row_marker_value = CHANGE_STREAM_OPERATION_MAP_WHEN_INIT[
+                            operationType
+                        ]
+                    else:
+                        row_marker_value = CHANGE_STREAM_OPERATION_MAP[operationType]
+
+                    df.insert(0, ROW_MARKER_COLUMN_NAME, [row_marker_value])
+
+                    # Merge into accumulative_df until batch size/time threshold
+                    if accumulative_df is not None:
+                        accumulative_df = pd.concat(
+                            [accumulative_df, df], ignore_index=True
+                        )
+                        logger.info("concat accumulative_df result:")
+                        logger.info(accumulative_df)
+                    else:
+                        logger.info("df created")
+                        accumulative_df = df
+                        last_sync_time = time.time()
+                        logger.info(
+                            "last_sync_time when first record added: %s", last_sync_time
+                        )
+
+                    accumulative_df, last_sync_time = process_accumulative_df(
+                        accumulative_df,
+                        collection_name,
+                        init_sync_stat_flag,
+                        last_sync_time,
+                        time_threshold_in_sec,
+                        resume_token,
+                        logger,
+                    )
+
+                # End inner while True
+
+        except (
+            pymongo.errors.ConnectionFailure,
+            pymongo.errors.CursorNotFound,
+            pymongo.errors.OperationFailure,
+        ) as exc:
+            logger.warning(
+                "change stream error for collection %s: %s; will reopen with last resume_token=%s",
+                collection_name,
+                exc,
+                resume_token,
+                exc_info=True,
             )
-        ##>> enhancement to check time elapsed even if no event comes - no waiting indefinitely for a change
+            # For most resumable errors, just loop and reopen.
+            # If you want to differentiate non-resumable errors, do it here.
             continue
-          else:
-            # if not init_sync_stat_flag == "Y":
-            #     init_sync_stat_flag = read_from_file(``
-            #       collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
-            #     )
-            # do post init flush if this is the first iteration after init is done
-            #if not init_flag and not post_init_flush_done:
-            # if init_sync_stat_flag == "Y" and not post_init_flush_done:
-            #     __post_init_flush(collection_name, logger)
-            #     post_init_flush_done = True
-            
-            if (accumulative_df is not None
-            ):
-                accumulative_df, last_sync_time = process_accumulative_df(
-                    accumulative_df, collection_name, init_sync_stat_flag, last_sync_time, time_threshold_in_sec, resume_token, logger
+
+        # If we ever exit the inner loop *without* an exception:
+        # check stream.alive to see if the server closed the cursor.
+        if not stream.alive:
+            logger.warning(
+                "change stream closed by server for collection %s; reopening with last resume_token=%s",
+                collection_name,
+                resume_token,
             )
-          print("Sleeping for 20 seconds")
-          time.sleep(20)
+            # Outer while True will reopen
+            continue
+
 ##>> enhancement to check time elapsed even if no event comes - no waiting indefinitely for a change
 def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_flag, last_sync_time, time_threshold_in_sec, resume_token, logger):
     if not init_sync_stat_flag == "Y":

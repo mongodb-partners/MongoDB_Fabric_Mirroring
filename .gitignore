@@ -10,3 +10,9 @@ data_files/
 *.ipynb
 .DS_Store
 *.tfvars
+*.tfplan
+*.tfplan.*
+.terraform
+*.tfstate
+*.tfstate.*
+*.lock.*
