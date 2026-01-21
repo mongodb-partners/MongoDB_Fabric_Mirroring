@@ -184,15 +184,50 @@ def listening(collection_name: str):
             pymongo.errors.CursorNotFound,
             pymongo.errors.OperationFailure,
         ) as exc:
-            logger.warning(
-                "change stream error for collection %s: %s; will reopen with last resume_token=%s",
-                collection_name,
-                exc,
-                resume_token,
-                exc_info=True,
+            # Detect non-resumable ChangeStreamHistoryLost / stale resume token.
+            is_non_resumable = (
+                isinstance(exc, pymongo.errors.OperationFailure)
+                and (
+                    exc.code == 286  # ChangeStreamHistoryLost
+                    or exc.has_error_label("NonResumableChangeStreamError")
+                )
             )
-            # For most resumable errors, just loop and reopen.
-            # If you want to differentiate non-resumable errors, do it here.
+
+            if is_non_resumable:
+                logger.error(
+                    "Non-resumable Change Stream error (ChangeStreamHistoryLost) for collection %s: %s. "
+                    "Clearing resume token and restarting from latest position.",
+                    collection_name,
+                    exc,
+                    exc_info=True,
+                )
+
+                # Drop the bad resume token so the next loop does *not* send resume_after.
+                resume_token = None
+
+                # Persist that change so a restart doesn't reuse the stale token.
+                write_to_file(
+                    None,
+                    collection_name,
+                    DELTA_SYNC_RESUME_TOKEN_FILE_NAME,
+                    FileType.PICKLE,
+                )
+
+                # Optional: clear any in-memory batch since we've lost continuity anyway.
+                accumulative_df = None
+                last_sync_time = None
+            else:
+                # Resumable errors: keep the last known resume_token.
+                logger.warning(
+                    "Resumable change stream error for collection %s: %s; "
+                    "will reopen with last resume_token=%s",
+                    collection_name,
+                    exc,
+                    resume_token,
+                    exc_info=True,
+                )
+
+            # Outer while True will rebuild watch_kwargs and reopen.
             continue
 
         # If we ever exit the inner loop *without* an exception:
