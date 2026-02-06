@@ -6,6 +6,8 @@ import os
 import pickle
 from threading import Thread
 import threading
+from pymongo.errors import PyMongoError
+from datetime import datetime, timedelta
 
 from constants import (
     ROW_MARKER_COLUMN_NAME,
@@ -49,7 +51,13 @@ def listening(collection_name: str):
         )
 
     #MongoDB connection and data info
-    client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"), socketTimeoutMS=40000)
+    client = pymongo.MongoClient(
+        os.getenv("MONGO_CONN_STR"),
+        # 0 or None = no driver‑side socket timeout
+        socketTimeoutMS=None,
+        # (optionally) set a sane connect timeout instead of a read timeout
+        connectTimeoutMS=20000,
+    )
     db = client[db_name]
     collection = db[collection_name]
 
@@ -82,12 +90,17 @@ def listening(collection_name: str):
                     collection_name,
                     resume_token,
                 )
-
+                last_action_time = datetime.now()
                 # Use try_next so we can flush on time threshold even without new events
                 while True:
+                    before = time.time()
                     change = stream.try_next()
+                    after = time.time()
 
                     if change is None:
+                        if (datetime.now() - last_action_time >= timedelta(minutes=5)):
+                            logger.info("no change; try_next() round-trip took %.3fs", after - before)
+                            last_action_time = datetime.now()
                         # No new events in this await interval; consider time-based flush
                         if (
                             accumulative_df is not None
@@ -183,6 +196,7 @@ def listening(collection_name: str):
             pymongo.errors.ConnectionFailure,
             pymongo.errors.CursorNotFound,
             pymongo.errors.OperationFailure,
+            pymongo.Error,
         ) as exc:
             # Detect non-resumable ChangeStreamHistoryLost / stale resume token.
             is_non_resumable = (
@@ -228,6 +242,8 @@ def listening(collection_name: str):
                 )
 
             # Outer while True will rebuild watch_kwargs and reopen.
+            # Slight backoff to avoid tight reconnect loop
+            time.sleep(2)
             continue
 
         # If we ever exit the inner loop *without* an exception:
