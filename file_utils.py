@@ -1,9 +1,12 @@
 import os
 import pickle
+import logging
 from enum import Enum
 from typing import Any
 import utils
 from push_file_to_lz import push_file_to_lz, get_file_from_lz, delete_file_from_lz
+
+logger = logging.getLogger(__name__)
 
 
 class FileType(Enum):
@@ -50,11 +53,11 @@ def read_from_file(table_name: str, file_name: str, file_type: FileType):
     if response_status_code == 200: 
         if file_type == FileType.PICKLE:
             obj = pickle.loads(file_content.content)
-            print("Type of object: ", isinstance(obj, bytes))
+            logger.debug(f"read_from_file: table={table_name}, file={file_name}, is_bytes={isinstance(obj, bytes)}")
             # Check if the result is itself a pickled object (nested)
             if isinstance(obj, bytes):
                 obj = pickle.loads(obj)
-            print("Unpickled object: ", obj)
+            logger.debug(f"read_from_file: successfully unpickled object for table={table_name}, file={file_name}")
             return obj
 
         elif file_type == FileType.TEXT:

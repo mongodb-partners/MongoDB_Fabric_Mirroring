@@ -14,23 +14,24 @@ def push_file_to_lz(
     filepath: str,
     table_name: str,
 ):
-    logger.info(f"pushing file to lz. table_name={table_name}, filepath={filepath}")
+    coll_logger = logging.getLogger(f"{__name__}[{table_name}]")
+    coll_logger.info(f"pushing file to lz. filepath={filepath}")
     try:
         if os.getenv("DEBUG__SKIP_PUSH_TO_LZ"):
-            logger.info("Push to LZ skipped by environment variable DEBUG__SKIP_PUSH_TO_LZ")
+            coll_logger.info("Push to LZ skipped by environment variable DEBUG__SKIP_PUSH_TO_LZ")
         else:
             access_token = __get_access_token(
                 os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID")
             )
-            __patch_file(access_token, filepath, os.getenv("LZ_URL"), table_name)
+            __patch_file(access_token, filepath, os.getenv("LZ_URL"), table_name, coll_logger)
         # identify if any other parquet files in the dir, and remove them, leaving only the last one we just pushed
-        __clean_up_old_parquet_files(filepath)
+        __clean_up_old_parquet_files(filepath, table_name, coll_logger)
     except Exception as e:
-        logger.error(f"Error pushing file to lz: {str(e)}")
+        coll_logger.error(f"Error pushing file to lz: {str(e)}")
         raise
 
 
-def __clean_up_old_parquet_files(filepath: str):
+def __clean_up_old_parquet_files(filepath: str, table_name: str, coll_logger: logging.Logger):
     if os.getenv("DEBUG__SKIP_PARQUET_FILES_CLEAN_UP"):
         return
     filename_stem = os.path.splitext(os.path.basename(filepath))[0]
@@ -38,7 +39,7 @@ def __clean_up_old_parquet_files(filepath: str):
     # do nothing if it's a parquet file with prefix, or it's not a parquet file
     if not filename_stem.isnumeric() or filename_ext != ".parquet":
         return
-    logger.debug(f"Cleaning up old parquet files. Current file: {filepath}")
+    coll_logger.debug(f"Cleaning up old parquet files. Current file: {filepath}")
     dir = os.path.dirname(filepath)
     current_filename = os.path.basename(filepath)
     old_parquet_filename_list = [
@@ -49,7 +50,7 @@ def __clean_up_old_parquet_files(filepath: str):
         and int(os.path.splitext(filename)[0]) < int(filename_stem)
     ]
     for old_parquet_filename in old_parquet_filename_list:
-        logger.debug(f"Deleting old parquet file {old_parquet_filename}")
+        coll_logger.debug(f"Deleting old parquet file {old_parquet_filename}")
         os.remove(os.path.join(dir, old_parquet_filename))
 
 
@@ -85,7 +86,7 @@ def __get_access_token(app_id, client_secret, directory_id):
         return token
 
 
-def __patch_file(access_token, file_path, lz_url, table_name):
+def __patch_file(access_token, file_path, lz_url, table_name, coll_logger: logging.Logger):
     try:
         file_name = os.path.basename(file_path)
         file_name_temp = file_name
@@ -99,11 +100,11 @@ def __patch_file(access_token, file_path, lz_url, table_name):
         token_url = base_url + file_name
 
         token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
-        logger.debug("creating file in lake")
+        coll_logger.debug("creating file in lake")
 
         # Code to create file in lakehouse
         response = requests.put(token_url_temp, data={}, headers=token_headers)
-        logger.debug(response)
+        coll_logger.debug(response)
 
         token_url_temp = base_url + file_name_temp + '_TEMP' + "?position=0&action=append&flush=true"
         token_headers = {
@@ -111,14 +112,14 @@ def __patch_file(access_token, file_path, lz_url, table_name):
             "x-ms-file-name": file_name,
         }
             
-        logger.debug(token_url_temp)    
-        logger.debug("pushing data to file in lake")
+        coll_logger.debug(token_url_temp)    
+        coll_logger.debug("pushing data to file in lake")
 
         # Code to push Data to Lakehouse
         with open(file_path, "rb") as file:
             file_contents = file.read()
             response = requests.patch(token_url_temp, data=file_contents, headers=token_headers)
-        logger.debug(response)
+        coll_logger.debug(response)
 
         # Rename file from temp to actual name
         token_headers = {
@@ -127,16 +128,15 @@ def __patch_file(access_token, file_path, lz_url, table_name):
             "x-ms-version": "2020-06-12"
         }
         response = requests.put(token_url, headers=token_headers)
-        logger.debug(response)
+        coll_logger.debug(response)
     except Exception as e:
-        logger.error(f"Error patching file to landing zone: {str(e)}")
+        coll_logger.error(f"Error patching file to landing zone: {str(e)}")
         raise
 
 
 def get_file_from_lz(table_name, file_name):
-    logger.info(
-        f"trying to get file from lz. table_name={table_name}, file_name={file_name}"
-    )
+    coll_logger = logging.getLogger(f"{__name__}[{table_name}]")
+    coll_logger.info(f"trying to get file from lz. file_name={file_name}")
     access_token = __get_access_token(
         os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID")
     )
@@ -145,8 +145,8 @@ def get_file_from_lz(table_name, file_name):
     response = requests.get(url, headers=token_headers)
     response_status_code = response.status_code
     if response_status_code != 200:
-        logger.warning(
-            f"failed to get file from Landing Zone. Server responded with code {response_status_code}"
+        coll_logger.warning(
+            f"failed to get file from Landing Zone. file_name={file_name}, status_code={response_status_code}"
         )
         return None, None
     local_file_path = os.path.join(utils.get_table_dir(table_name), file_name)
@@ -158,14 +158,13 @@ def get_file_from_lz(table_name, file_name):
 
 
 def delete_file_from_lz(table_name, file_name):
-    logger.info(
-        f"trying to delete file from lz. table_name={table_name}, file_name={file_name}"
-    )
+    coll_logger = logging.getLogger(f"{__name__}[{table_name}]")
+    coll_logger.info(f"trying to delete file from lz. file_name={file_name}")
     access_token = __get_access_token(
         os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID")
     )
     token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
     url = os.getenv("LZ_URL") + table_name + "/" + file_name
     response = requests.delete(url, headers=token_headers)
-    logger.debug(f"delete response: {response}")
+    coll_logger.debug(f"delete response: {response}")
     return response.status_code if response.status_code == 200 else None

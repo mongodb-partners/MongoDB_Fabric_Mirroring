@@ -31,24 +31,123 @@ from init_sync import init_sync
 import schemas
 import schema_utils
 from file_utils import FileType, read_from_file, write_to_file
+from metrics_database import get_metrics_database
+
+
+class BatchSizeManager:
+    """
+    Manages dynamic batch size scaling for delta sync.
+    
+    Scales up by 10x when high throughput is detected (5 consecutive full batches in 5 minutes).
+    Scales down after 5 minutes of inactivity or 5 consecutive under-limit writes.
+    """
+    
+    def __init__(self, default_size: int = 100, scale_factor: int = 10, logger=None):
+        self.default_size = default_size
+        self.scale_factor = scale_factor
+        self.current_size = default_size
+        self.is_scaled = False
+        self.logger = logger
+        
+        # Tracking for scale-up: timestamps of full batch writes
+        self.full_batch_timestamps = []
+        
+        # Tracking for scale-down
+        self.under_limit_count = 0
+        self.last_activity_time = time.time()
+    
+    def get_batch_size(self) -> int:
+        """Get current batch size, checking for inactivity reset."""
+        if self.is_scaled and (time.time() - self.last_activity_time) >= 300:
+            self._scale_down("inactivity timeout (5 minutes)")
+        return self.current_size
+    
+    def record_write(self, row_count: int):
+        """Record a parquet write and check for scale up/down conditions."""
+        self.last_activity_time = time.time()
+        
+        if self.is_scaled:
+            # In scaled mode: check for scale-down conditions
+            if row_count < self.default_size:
+                self.under_limit_count += 1
+                if self.under_limit_count >= 5:
+                    self._scale_down(f"5 consecutive under-limit writes ({row_count} < {self.default_size})")
+            else:
+                self.under_limit_count = 0
+        else:
+            # In normal mode: check for scale-up conditions
+            if row_count >= self.default_size:
+                self.full_batch_timestamps.append(time.time())
+                # Remove timestamps older than 5 minutes
+                cutoff = time.time() - 300
+                self.full_batch_timestamps = [t for t in self.full_batch_timestamps if t > cutoff]
+                
+                if len(self.full_batch_timestamps) >= 5:
+                    self._scale_up()
+            else:
+                # Under-limit write in normal mode resets the consecutive count
+                self.full_batch_timestamps = []
+    
+    def _scale_up(self):
+        """Scale up batch size by the scale factor."""
+        old_size = self.current_size
+        self.current_size = self.default_size * self.scale_factor
+        self.is_scaled = True
+        self.full_batch_timestamps = []
+        self.under_limit_count = 0
+        
+        if self.logger:
+            self.logger.info(
+                f"Scaling UP batch size from {old_size} to {self.current_size} "
+                f"(5 consecutive full batches detected in 5 minutes)"
+            )
+    
+    def _scale_down(self, reason: str):
+        """Scale down batch size to default."""
+        old_size = self.current_size
+        self.current_size = self.default_size
+        self.is_scaled = False
+        self.full_batch_timestamps = []
+        self.under_limit_count = 0
+        
+        if self.logger:
+            self.logger.info(
+                f"Scaling DOWN batch size from {old_size} to {self.current_size} ({reason})"
+            )
+
 
 def listening(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
+    
+    try:
+        _listening_impl(collection_name, logger)
+    except Exception as e:
+        logger.error(f"Unhandled exception in listening for {collection_name}: {e}", exc_info=True)
+        raise
+
+
+def _listening_impl(collection_name: str, logger: logging.Logger):
     db_name = os.getenv("MONGO_DB_NAME")
     logger.debug(f"db_name={db_name}")
     logger.debug(f"collection={collection_name}")
     # moved listening method so that it is called after the env variables are loaded
     time_threshold_in_sec = float(os.getenv("TIME_THRESHOLD_IN_SEC"))
     post_init_flush_done = False
+    
+    # Initialize dynamic batch size manager
+    batch_manager = BatchSizeManager(
+        default_size=int(os.getenv("DELTA_SYNC_BATCH_SIZE", 100)),
+        scale_factor=10,
+        logger=logger
+    )
 
     # table_dir = get_table_dir(collection_name) #Never used
     resume_token = read_from_file(
         collection_name, DELTA_SYNC_RESUME_TOKEN_FILE_NAME, FileType.PICKLE
     )
     if resume_token:
-        logger.info(
-            f"interrupted incremental sync detected, continuing with resume_token={resume_token}"
-        )
+        logger.info("interrupted incremental sync detected, continuing from saved checkpoint")
+        logger.debug(f"resume_token value: {resume_token}")
 
     #MongoDB connection and data info
     client = pymongo.MongoClient(
@@ -86,10 +185,11 @@ def listening(collection_name: str):
         try:
             with collection.watch(**watch_kwargs) as stream:
                 logger.info(
-                    "opened change stream for %s with resume_token=%s",
+                    "opened change stream for %s%s",
                     collection_name,
-                    resume_token,
+                    " (resuming from checkpoint)" if resume_token else "",
                 )
+                logger.debug(f"resume_token: {resume_token}")
                 last_action_time = datetime.now()
                 # Use try_next so we can flush on time threshold even without new events
                 while True:
@@ -115,6 +215,7 @@ def listening(collection_name: str):
                                 time_threshold_in_sec,
                                 resume_token,
                                 logger,
+                                batch_manager,
                             )
                         continue
 
@@ -150,7 +251,7 @@ def listening(collection_name: str):
                     resume_token = change["_id"]
                     logger.debug("resume_token: %s", resume_token)
 
-                    schema_utils.process_dataframe(collection_name, df)
+                    schema_utils.process_dataframe(collection_name, df, sync_type='delta')
 
                     if init_sync_stat_flag != "Y":
                         logger.debug(
@@ -164,21 +265,28 @@ def listening(collection_name: str):
                         row_marker_value = CHANGE_STREAM_OPERATION_MAP[operationType]
 
                     df.insert(0, ROW_MARKER_COLUMN_NAME, [row_marker_value])
+                    
+                    # Record document fetched metric for delta sync
+                    try:
+                        metrics_db = get_metrics_database()
+                        metrics_db.record_documents_fetched(
+                            collection_name=collection_name,
+                            sync_type='delta',
+                            document_count=1
+                        )
+                    except Exception as e:
+                        logger.debug(f"Failed to record documents fetched metric: {e}")
 
                     # Merge into accumulative_df until batch size/time threshold
                     if accumulative_df is not None:
                         accumulative_df = pd.concat(
                             [accumulative_df, df], ignore_index=True
                         )
-                        logger.info("concat accumulative_df result:")
-                        logger.info(accumulative_df)
+                        logger.info(f"change stream: received {operationType}, accumulated {accumulative_df.shape[0]} documents pending sync")
                     else:
-                        logger.info("df created")
                         accumulative_df = df
                         last_sync_time = time.time()
-                        logger.info(
-                            "last_sync_time when first record added: %s", last_sync_time
-                        )
+                        logger.info(f"change stream: received {operationType}, started accumulating (1 document)")
 
                     accumulative_df, last_sync_time = process_accumulative_df(
                         accumulative_df,
@@ -188,6 +296,7 @@ def listening(collection_name: str):
                         time_threshold_in_sec,
                         resume_token,
                         logger,
+                        batch_manager,
                     )
 
                 # End inner while True
@@ -196,7 +305,6 @@ def listening(collection_name: str):
             pymongo.errors.ConnectionFailure,
             pymongo.errors.CursorNotFound,
             pymongo.errors.OperationFailure,
-            pymongo.Error,
         ) as exc:
             # Detect non-resumable ChangeStreamHistoryLost / stale resume token.
             is_non_resumable = (
@@ -234,12 +342,12 @@ def listening(collection_name: str):
                 # Resumable errors: keep the last known resume_token.
                 logger.warning(
                     "Resumable change stream error for collection %s: %s; "
-                    "will reopen with last resume_token=%s",
+                    "will reopen from last checkpoint",
                     collection_name,
                     exc,
-                    resume_token,
                     exc_info=True,
                 )
+                logger.debug(f"resume_token: {resume_token}")
 
             # Outer while True will rebuild watch_kwargs and reopen.
             # Slight backoff to avoid tight reconnect loop
@@ -250,19 +358,24 @@ def listening(collection_name: str):
         # check stream.alive to see if the server closed the cursor.
         if not stream.alive:
             logger.warning(
-                "change stream closed by server for collection %s; reopening with last resume_token=%s",
+                "change stream closed by server for collection %s; reopening from last checkpoint",
                 collection_name,
-                resume_token,
             )
+            logger.debug(f"resume_token: {resume_token}")
             # Outer while True will reopen
             continue
 
 ##>> enhancement to check time elapsed even if no event comes - no waiting indefinitely for a change
-def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_flag, last_sync_time, time_threshold_in_sec, resume_token, logger):
+def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_flag, last_sync_time, time_threshold_in_sec, resume_token, logger, batch_manager):
+    # Get current dynamic batch size (also checks for inactivity reset)
+    current_batch_size = batch_manager.get_batch_size()
+    
     if not init_sync_stat_flag == "Y":
+        # During init sync, use default batch size (no scaling during init)
+        default_batch_size = int(os.getenv("DELTA_SYNC_BATCH_SIZE", 100))
         if (accumulative_df is not None
             and (
-                (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
+                (accumulative_df.shape[0] >= default_batch_size)
             )
         ):
             prefix = TEMP_PREFIX_DURING_INIT
@@ -276,7 +389,7 @@ def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_fla
         if (accumulative_df is not None
         ):
             if(
-                (accumulative_df.shape[0] >= int(os.getenv("DELTA_SYNC_BATCH_SIZE")))
+                (accumulative_df.shape[0] >= current_batch_size)
                 or ((time.time() - last_sync_time) >= time_threshold_in_sec)
             ):
                 prefix = ""
@@ -289,12 +402,33 @@ def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_fla
                 parquet_full_path_filename = get_parquet_full_path_filename(collection_name, last_parquet_file_num)
 
                 logger.info(f"writing parquet file: {parquet_full_path_filename}")
+                row_count = len(accumulative_df)
                 accumulative_df.to_parquet(parquet_full_path_filename)
                 accumulative_df = None
 
                 push_file_to_lz(parquet_full_path_filename, collection_name)
+                
+                # Record parquet file metric
+                try:
+                    file_size = os.path.getsize(parquet_full_path_filename)
+                    metrics_db = get_metrics_database()
+                    metrics_db.record_parquet_file(
+                        collection_name=collection_name,
+                        file_name=os.path.basename(parquet_full_path_filename),
+                        file_size_bytes=file_size,
+                        row_count=row_count,
+                        sync_type='delta'
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to record parquet file metric: {e}")
+                
+                # Record write for dynamic batch size scaling
+                batch_manager.record_write(row_count)
+                logger.debug(f"batch size status: current={batch_manager.current_size}, scaled={batch_manager.is_scaled}")
+                
             #    resume_token = change["_id"]
-                logger.info(f"writing resume_token into file: {resume_token}")
+                logger.info("saving checkpoint: resume_token written to file")
+                logger.debug(f"resume_token value: {resume_token}")
                 write_to_file(
                     resume_token,
                     collection_name,
@@ -302,7 +436,7 @@ def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_fla
                     FileType.PICKLE,
                 )
                 last_parquet_file_num +=  1
-                logger.info(f"writing last parquet number into file: {last_parquet_file_num}")
+                logger.info(f"saving checkpoint: parquet file #{last_parquet_file_num}")
                 write_to_file(
                     last_parquet_file_num,
                     collection_name,
@@ -347,7 +481,7 @@ def __post_init_flush(table_name: str, logger):
         push_file_to_lz(new_parquet_full_path, table_name)
         # write last parquet file number to file
         last_parquet_file_num +=  1
-        logger.info(f"writing last parquet number into file: {last_parquet_file_num}")
+        logger.info(f"saving checkpoint: parquet file #{last_parquet_file_num}")
         write_to_file(
             last_parquet_file_num,
             table_name,

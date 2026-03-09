@@ -16,3 +16,19 @@ data_files/
 *.tfstate
 *.tfstate.*
 *.lock.*
+
+# SQLite databases
+logs.db
+metrics.db
+dead_queue.db
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Test files
+test_*.py

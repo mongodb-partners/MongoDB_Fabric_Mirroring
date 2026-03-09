@@ -2,6 +2,7 @@ from datetime import date, datetime
 import os
 import json
 import logging
+import base64
 #17June2025 - doesnt work for 3.9 and lesser Python versions
 #from types import NoneType
 import bson.int64
@@ -29,28 +30,72 @@ from pandas.api.types import (
     is_object_dtype,
     is_datetime64_any_dtype
 )
+from metrics_database import get_metrics_database
+from dead_queue_database import get_dead_queue_database
 
 
 logger = logging.getLogger(f"{__name__}")
 #17June2025 - added NoneType manually instead of importing from types for 3.9 and lesser Python versions
 NoneType = type(None)
 
+# Global context variables for conversion tracking
+current_column_name = None
+current_document_id = None
+current_row_index = None
+table_name = None
+conversion_flag = False
+# DataFrame reference for looking up document IDs during apply
+_current_df = None
+# Conversion counters for metrics
+_conversion_success_count = 0
+_conversion_failure_count = 0
+
+
 def _converter_template(obj, type_name, raw_convert_func, default_value=None):
+    global conversion_flag, current_document_id, current_row_index, _conversion_success_count, _conversion_failure_count
     original_type = type(obj) 
     logger.debug(f"Converting {obj} of type {original_type} to {type_name}.")
     try:
-        return raw_convert_func(obj)
-    except (ValueError, TypeError):
-        logger.warning(f'Unsuccessful conversion from "{obj}" of type {original_type} to {type_name}.')
-        global conversion_flag
+        result = raw_convert_func(obj)
+        _conversion_success_count += 1
+        return result
+    except (ValueError, TypeError) as e:
+        _conversion_failure_count += 1
+        # Build detailed warning message with collection, document ID, and field
+        doc_id_str = f"doc_id={current_document_id}" if current_document_id else f"row={current_row_index}"
+        truncated_value = str(obj)[:100] + "..." if len(str(obj)) > 100 else str(obj)
+        
+        # Use collection-specific logger so log_database can extract collection name
+        coll_logger = logging.getLogger(f"{__name__}[{table_name}]") if table_name else logger
+        coll_logger.warning(
+            f'Unsuccessful conversion: {doc_id_str}, '
+            f'field="{current_column_name}": value "{truncated_value}" '
+            f'(type {original_type.__name__}) cannot convert to {type_name}. Error: {e}'
+        )
         conversion_flag = True
 
         append_to_file(
-            f"\n{current_column_name:<20} | {str(obj):<20} | {str(default_value):<20}",
+            f"\n{current_column_name:<20} | {str(obj):<50} | {str(default_value):<20} | {doc_id_str}",
             table_name,
             CONVERSION_LOG_FILE_NAME,
             FileType.TEXT
         )
+        
+        # Add to dead queue
+        try:
+            dead_queue_db = get_dead_queue_database()
+            dead_queue_db.add_failed_conversion(
+                collection_name=table_name or "unknown",
+                document_id=str(current_document_id) if current_document_id else None,
+                field_name=current_column_name or "unknown",
+                original_value=truncated_value,
+                original_type=original_type.__name__,
+                target_type=type_name,
+                error_message=str(e)
+            )
+        except Exception as dq_error:
+            logger.debug(f"Failed to add entry to dead queue: {dq_error}")
+        
         return default_value
 
 
@@ -104,8 +149,54 @@ def to_pandas_timestamp(obj) -> pd.Timestamp:
 
 def do_nothing(obj):
     original_type = type(obj)
-    logger.info(f'Did not convert "{obj}" of type {original_type}.')
+    doc_id_str = f"doc_id={current_document_id}" if current_document_id else f"row={current_row_index}"
+    truncated_value = str(obj)[:100] + "..." if len(str(obj)) > 100 else str(obj)
+    logger.info(
+        f'No conversion applied in collection="{table_name}", {doc_id_str}, '
+        f'field="{current_column_name}": value "{truncated_value}" of type {original_type.__name__}.'
+    )
     return obj
+
+
+def to_base64_string(obj) -> str:
+    """Convert binary data to base64-encoded string for parquet compatibility."""
+    global conversion_flag, _conversion_success_count, _conversion_failure_count
+    if obj is None or (isinstance(obj, float) and pd.isna(obj)):
+        return ''
+    try:
+        if isinstance(obj, (bytes, bson.binary.Binary)):
+            _conversion_success_count += 1
+            return base64.b64encode(obj).decode('utf-8')
+        _conversion_success_count += 1
+        return str(obj)
+    except Exception as e:
+        _conversion_failure_count += 1
+        doc_id_str = f"doc_id={current_document_id}" if current_document_id else f"row={current_row_index}"
+        truncated_value = str(obj)[:50] + "..." if len(str(obj)) > 50 else str(obj)
+        original_type = type(obj)
+        coll_logger = logging.getLogger(f"{__name__}[{table_name}]") if table_name else logger
+        coll_logger.warning(
+            f'Failed to convert binary data to base64: {doc_id_str}, '
+            f'field="{current_column_name}": value "{truncated_value}". Error: {e}'
+        )
+        conversion_flag = True
+        
+        # Add to dead queue
+        try:
+            dead_queue_db = get_dead_queue_database()
+            dead_queue_db.add_failed_conversion(
+                collection_name=table_name or "unknown",
+                document_id=str(current_document_id) if current_document_id else None,
+                field_name=current_column_name or "unknown",
+                original_value=truncated_value,
+                original_type=original_type.__name__,
+                target_type="base64_string",
+                error_message=str(e)
+            )
+        except Exception as dq_error:
+            logger.debug(f"Failed to add entry to dead queue: {dq_error}")
+        
+        return ''
 
 
 def to_datetime_iso(obj) -> str:
@@ -143,7 +234,8 @@ TYPE_TO_CONVERT_FUNCTION_MAP = {
     dict: to_json_string,
     list: to_json_string,
     pd.Timestamp: to_pandas_timestamp,
-    bson.binary.Binary: do_nothing
+    bson.binary.Binary: to_base64_string,
+    bytes: to_base64_string,
 }
 
 COLUMN_DTYPE_CONVERSION_MAP = {
@@ -250,7 +342,7 @@ def init_table_schema(table_name: str):
         table_name, INTERNAL_SCHEMA_FILE_NAME, FileType.PICKLE
     )
     if schema_of_this_table:
-        logger.info(f"loaded schema of {table_name} from file")
+        logger.debug(f"loaded schema of {table_name} from file")
     #    schemas.init_table_schema(table_name, schema_of_this_table)
     # 9 May 2025 should not write back to internal schema file
         schemas.init_table_schema_to_mem(table_name, schema_of_this_table)
@@ -260,7 +352,7 @@ def init_table_schema(table_name: str):
             table_name, COLUMN_RENAMING_FILE_NAME, FileType.PICKLE
         )
         if table_column_renaming:
-            logger.info(f"loaded column renaming of {table_name} from file")
+            logger.debug(f"loaded column renaming of {table_name} from file")
             schemas.init_column_renaming(table_name, table_column_renaming)
     else:
         # else, init schema from collection
@@ -296,10 +388,38 @@ def init_table_schema(table_name: str):
         schemas.init_column_renaming(table_name, column_renaming_of_this_table)
 
 
-def process_dataframe(table_name_param: str, df: pd.DataFrame):
-    global current_column_name, table_name, conversion_flag
+def _create_conversion_wrapper(conversion_fcn, df, col_name):
+    """Create a wrapper that tracks document ID during conversion."""
+    global current_column_name, current_document_id, current_row_index, _current_df
+    current_column_name = col_name
+    _current_df = df
+    
+    # Check if '_id' column exists to get document IDs
+    has_id_column = '_id' in df.columns
+    
+    def wrapper_with_index(row_idx):
+        global current_document_id, current_row_index
+        current_row_index = row_idx
+        if has_id_column:
+            current_document_id = df.at[row_idx, '_id']
+        else:
+            current_document_id = None
+        return conversion_fcn(df.at[row_idx, col_name])
+    
+    return wrapper_with_index
+
+
+def process_dataframe(table_name_param: str, df: pd.DataFrame, sync_type: str = 'init'):
+    global current_column_name, table_name, conversion_flag, _current_df, _conversion_success_count, _conversion_failure_count
     table_name = table_name_param
     conversion_flag = False
+    _current_df = df
+    _sync_type = sync_type
+    
+    # Reset conversion counters for this batch
+    _conversion_success_count = 0
+    _conversion_failure_count = 0
+    
     for col_name in df.keys().values:
         current_dtype = df[col_name].dtype
         current_first_item = _get_first_item(df, col_name)
@@ -356,9 +476,9 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
                     expected_type, do_nothing
                 )
                 
-                # Set the current column name for logging
-                df[col_name] = df[col_name].apply(conversion_fcn)
-                print(df[col_name])
+                # Use wrapper to track document ID during conversion
+                wrapper = _create_conversion_wrapper(conversion_fcn, df, col_name)
+                df[col_name] = [wrapper(idx) for idx in df.index]
                 break
         # for index, item in enumerate(df[col_name]):
             # print(f"Row {index}: Value={item}, Type={type(item)}")
@@ -392,9 +512,10 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
                 df[col_name] = df[col_name].dt.tz_localize(None)
                 df[col_name] = df[col_name].astype("datetime64[ms]")      
             except (ValueError, TypeError) as e:
-                logger.warning(
-                    f"An {e.__class__.__name__} was caught when trying to convert "
-                    + f"the dtype of the column {col_name} from {current_dtype} to datetime64[ms]"
+                coll_logger = logging.getLogger(f"{__name__}[{table_name}]")
+                coll_logger.warning(
+                    f'Dtype conversion error: field="{col_name}", '
+                    f'{e.__class__.__name__} when converting from {current_dtype} to datetime64[ms]. Error: {e}'
                 )
         
         current_dtype = df[col_name].dtype
@@ -418,12 +539,34 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
                 df[col_name] = df[col_name].astype(schema_of_this_column[DTYPE_KEY])
                 
             except (ValueError, TypeError) as e:
-                logger.warning(
-                    f"An {e.__class__.__name__} was caught when trying to convert "
-                    + f"the dtype of the column {col_name} from {current_dtype} to {schema_of_this_column[DTYPE_KEY]}"
+                coll_logger = logging.getLogger(f"{__name__}[{table_name}]")
+                coll_logger.warning(
+                    f'Dtype conversion error: field="{col_name}", '
+                    f'{e.__class__.__name__} when converting from {current_dtype} to {schema_of_this_column[DTYPE_KEY]}. Error: {e}'
                 )  
+    # Log conversion summary
+    coll_logger = logging.getLogger(f"{__name__}[{table_name}]")
+    if _conversion_success_count > 0 or _conversion_failure_count > 0:
+        coll_logger.info(
+            f"conversions ({_sync_type}): {_conversion_success_count} successful, {_conversion_failure_count} failed"
+        )
+    
     # Check if conversion log file exists before pushing
-    print("conversion_flag: ", conversion_flag)
+    logger.debug(f"conversion_flag={conversion_flag} for collection {table_name}")
     conversion_log_path = os.path.join(get_table_dir(table_name), CONVERSION_LOG_FILE_NAME)
     if os.path.exists(conversion_log_path) and conversion_flag:
+        coll_logger.info(f"pushing conversion log to LZ")
         push_file_to_lz(conversion_log_path, table_name)
+    
+    # Record conversion metrics
+    if _conversion_success_count > 0 or _conversion_failure_count > 0:
+        try:
+            metrics_db = get_metrics_database()
+            metrics_db.record_conversion(
+                collection_name=table_name,
+                successful=_conversion_success_count,
+                failed=_conversion_failure_count,
+                sync_type=_sync_type
+            )
+        except Exception as e:
+            logger.debug(f"Failed to record conversion metrics: {e}")

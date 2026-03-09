@@ -6,6 +6,8 @@ TYPES_TO_CONVERT_TO_STR = [
     bson.objectid.ObjectId,
     dict,
     list,
+    bytes,
+    bson.binary.Binary,
     # pd.Timestamp
 ]
 

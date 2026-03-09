@@ -29,11 +29,20 @@ from push_file_to_lz import push_file_to_lz
 # not required as now init_sync stat is stored in LZ
 #from flags import set_init_flag, clear_init_flag
 from file_utils import FileType, read_from_file, write_to_file, delete_file
+from metrics_database import get_metrics_database
 
 
 def init_sync(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
+    
+    try:
+        _init_sync_impl(collection_name, logger)
+    except Exception as e:
+        logger.error(f"Unhandled exception in init_sync for {collection_name}: {e}", exc_info=True)
+        raise
 
+
+def _init_sync_impl(collection_name: str, logger: logging.Logger):
     # detect if there's a init_sync_stat file in LZ, and get its value
     init_sync_stat_flag = read_from_file(
         collection_name, INIT_SYNC_STATUS_FILE_NAME, FileType.PICKLE
@@ -97,11 +106,13 @@ def init_sync(collection_name: str):
     )
     if max_id_from_file:
         max_id = max_id_from_file
-        logger.info(f"resumed max_id={max_id}")
+        logger.info("resumed from previously saved max_id checkpoint")
+        logger.debug(f"max_id value: {max_id}")
     else:
         max_id = __get_max_id(collection, logger)
         if max_id:
-            logger.info(f"writing max_id into file: {max_id}")
+            logger.info("writing max_id checkpoint to file")
+            logger.debug(f"max_id value: {max_id}")
             write_to_file(
                 max_id, collection_name, INIT_SYNC_MAX_ID_FILE_NAME, FileType.PICKLE
             )
@@ -110,15 +121,12 @@ def init_sync(collection_name: str):
 
     columns_to_convert_to_str = None
 
-    #moved to the begining to check if initial sync is completed
-    # detect if there's a last_id file, and restore last_id from it
-    # last_id = read_from_file(
-    #     collection_name, INIT_SYNC_LAST_ID_FILE_NAME, FileType.PICKLE
-    # )
-    # if last_id:
-    #     logger.info(
-    #         f"interrupted init sync detected, continuing with previous _id={last_id}"
-    #     )
+    # Initialize last_parquet_file_num before the loop
+    last_parquet_file_num = read_from_file(
+        collection_name, LAST_PARQUET_FILE_NUMBER, FileType.PICKLE
+    )
+    if not last_parquet_file_num:
+        last_parquet_file_num = 0
 
     while last_id is None or last_id < max_id:
         # for debug only
@@ -147,30 +155,34 @@ def init_sync(collection_name: str):
         # quit the loop if no more data
         if batch_df.empty:
             break
+        
+        # Record documents fetched metric
+        batch_row_count = len(batch_df)
+        try:
+            metrics_db = get_metrics_database()
+            metrics_db.record_documents_fetched(
+                collection_name=collection_name,
+                sync_type='init',
+                document_count=batch_row_count,
+                batch_number=last_parquet_file_num if last_parquet_file_num else 0
+            )
+        except Exception as e:
+            logger.debug(f"Failed to record documents fetched metric: {e}")
 
         # get the last _id of its original data type ObjectId, before we convert it to string later
         raw_last_id = batch_df["_id"].iloc[-1]
         first_id = batch_df["_id"][0]
-        logger.info("starting a new batch.")
-        logger.info(f"first _id of this batch: {first_id}")
-        logger.info(f"last _id of this batch: {raw_last_id}")
+        logger.info(f"processing batch with {batch_row_count} documents")
+        logger.debug(f"batch _id range: first={first_id}, last={raw_last_id}")
 
         # process df according to internal schema
-        schema_utils.process_dataframe(collection_name, batch_df)
+        schema_utils.process_dataframe(collection_name, batch_df, sync_type='init')
 
         trans_end_time = time.time()
         if enable_perf_timer:
             logger.info(f"TIME: trans took {trans_end_time-read_end_time:.2f} seconds")
 
         logger.debug("creating parquet file...")
-        # changed to get last parquet file number from LZ for resilience
-        #parquet_full_path_filename = get_parquet_full_path_filename(collection_name)
-        last_parquet_file_num = read_from_file(
-        collection_name, LAST_PARQUET_FILE_NUMBER, FileType.PICKLE
-        )
-        if not last_parquet_file_num:
-           last_parquet_file_num = 0
-
         parquet_full_path_filename = get_parquet_full_path_filename(collection_name, last_parquet_file_num)
         
         logger.info(f"writing parquet file: {parquet_full_path_filename}")
@@ -196,16 +208,31 @@ def init_sync(collection_name: str):
         push_end_time = time.time()
         if enable_perf_timer:
             logger.info(f"TIME: push took {push_end_time-push_start_time:.2f} seconds")
+        
+        # Record parquet file metric
+        try:
+            file_size = os.path.getsize(parquet_full_path_filename)
+            metrics_db = get_metrics_database()
+            metrics_db.record_parquet_file(
+                collection_name=collection_name,
+                file_name=os.path.basename(parquet_full_path_filename),
+                file_size_bytes=file_size,
+                row_count=batch_row_count,
+                sync_type='init'
+            )
+        except Exception as e:
+            logger.debug(f"Failed to record parquet file metric: {e}")
+        
         last_id = raw_last_id
-        logger.debug(f"DATA TYPE OF last_id IS: {type(last_id)}")
+        logger.debug(f"last_id type: {type(last_id)}, value: {last_id}")
         # write current last_id to file
-        logger.info(f"writing last_id into file: {last_id}")
+        logger.info("saving checkpoint: last_id written to file")
         write_to_file(
             last_id, collection_name, INIT_SYNC_LAST_ID_FILE_NAME, FileType.PICKLE
         )
         # write last parquet file number to file
         last_parquet_file_num += 1
-        logger.info(f"writing last parquet number into file: {last_parquet_file_num}")
+        logger.info(f"saving checkpoint: parquet file #{last_parquet_file_num}")
         write_to_file(
             last_parquet_file_num,
             collection_name,
