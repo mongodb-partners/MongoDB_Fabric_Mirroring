@@ -175,6 +175,15 @@ def init_sync(collection_name: str):
         
         logger.info(f"writing parquet file: {parquet_full_path_filename}")
 
+        # Convert any remaining Object column into String
+        id_col = batch_df['_id']
+        obj_cols = batch_df.select_dtypes(include=['object']).columns
+        batch_df[obj_cols] = batch_df[obj_cols].astype(str)
+        
+        #  Restore the _id column
+        batch_df['_id'] = id_col
+
+        # Write the parquet file
         batch_df.to_parquet(parquet_full_path_filename, index=False)
         # os.remove("temp.csv")
         write_end_time = time.time()    

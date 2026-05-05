@@ -90,3 +90,111 @@ Click below to start your App service for MongoDB to Fabric replication:
 1. This solution is based on MongoDB Atlas changestreams to capture the real time changes and sync them to Fabric OneLake. And because [changestreams are not yet supported for Timeseries collections](https://www.mongodb.com/docs/manual/core/timeseries/timeseries-limitations/), the current solution will not work for **Timeseries collections**.
 2. The CRUD operations events captured are Insert, Delete and Update. MongoDB **Replace** operation is not handled as [Open mirroring](https://learn.microsoft.com/en-us/fabric/mirroring/open-mirroring-landing-zone-format#format-requirements) doesn't support it as a valid action.
      
+# Appendices
+
+## Test document
+
+Here is a test document for the integration app validation, with all data types supported by MongoDB documents:
+
+```json
+{
+  "_id": {
+    "$oid": "69f96bebe6d817f45eefc846"
+  },
+  "doubleField": 1.23,
+  "stringField": "hello",
+  "objectField": {
+    "a": 1,
+    "b": "x"
+  },
+  "arrayField": [
+    1,
+    "two",
+    {
+      "three": 3
+    }
+  ],
+  "binaryField": {
+    "$binary": {
+      "base64": "AQID",
+      "subType": "00"
+    }
+  },
+  "undefinedField": null,
+  "objectIdField": {
+    "$oid": "69f9563395423819b6dba160"
+  },
+  "boolField": true,
+  "dateField": {
+    "$date": "2024-01-01T00:00:00.000Z"
+  },
+  "nullField": null,
+  "regexField": {
+    "$regularExpression": {
+      "pattern": "abc",
+      "options": "i"
+    }
+  },
+  "dbPointerField": {
+    "$ref": "otherCollection",
+    "$id": {
+      "$oid": "64cba4e7e3f1f1a1b2c3d4e5"
+    }
+  },
+  "jsField": {
+    "$code": "function() { return 1; }"
+  },
+  "jsWithScopeField": {
+    "$code": "function() { return x; }",
+    "$scope": {
+      "x": 42
+    }
+  },
+  "int32Field": 42,
+  "timestampField": {
+    "$timestamp": {
+      "t": 1,
+      "i": 1
+    }
+  },
+  "int64Field": {
+    "$numberLong": "9007199254740991"
+  },
+  "decimal128Field": {
+    "$numberDecimal": "1234.5678"
+  },
+  "minKeyField": {
+    "$minKey": 1
+  },
+  "maxKeyField": {
+    "$maxKey": 1
+  }
+}
+```
+
+
+On Microsoft Fabric Mirrored Database, the fields will be converted to the following:
+
+|COLUMN_NAME|	DATA_TYPE|
+|--|--|
+|_id|	varchar|
+|doubleField|	float|
+|stringField|varchar|
+|objectField|varchar|
+|arrayField|varchar|
+|binaryField|varchar|
+|undefinedField|varchar|
+|objectIdField|varchar|
+|boolField|bit|
+|dateField|datetime2|
+|nullField|varchar|
+|regexField|varchar|
+|dbPointerField|varchar|
+|jsField|varchar|
+|jsWithScopeField|varchar|
+|int32Field|bigint|
+|timestampField|varchar|
+|int64Field|bigint|
+|decimal128Field|float|
+|minKeyField|varchar|
+|maxKeyField|varchar|

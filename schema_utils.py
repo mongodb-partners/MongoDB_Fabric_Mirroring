@@ -274,6 +274,8 @@ def init_table_schema(table_name: str):
             fetched_data = list(cursor)
             #print(f"fetched_data: {fetched_data}")
             df = pd.DataFrame(fetched_data)
+            # Infering better datatypes from the dataframe
+            df = df.convert_dtypes(dtype_backend="pyarrow") 
             for col_name in df.keys().values:
                 get_id = _get_first_valid_id(df, col_name)
                 # Fetch the exact value from mongodb using the _id, dumping into df changes the data type.
