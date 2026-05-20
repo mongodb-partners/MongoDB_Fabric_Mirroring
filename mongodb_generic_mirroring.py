@@ -135,17 +135,35 @@ def mirror():
             os._exit(0)
 
 
+# def __get_all_collections() -> list[str]:
+#     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
+#     # check database existence
+#     db_name = os.getenv("MONGO_DB_NAME")
+#     print(f"db_name={db_name}")
+#     try:
+#         all_db_names = client.list_database_names()
+#         if db_name not in all_db_names:
+#             raise ValueError(f"Database name provided do not exists: {db_name}")
+#         db = client[db_name]
+#         return db.list_collection_names()
+#     except ServerSelectionTimeoutError:
+#         raise ValueError("Can not connect to MongoDB with the provided MONGO_CONN_STR.")
+    
+
+# New class:
 def __get_all_collections() -> list[str]:
     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
     # check database existence
     db_name = os.getenv("MONGO_DB_NAME")
     print(f"db_name={db_name}")
     try:
-        all_db_names = client.list_database_names()
+        all_db_names = [db["name"] for db in client.list_databases(nameOnly=True,authorizedDatabases=True,)]
         if db_name not in all_db_names:
             raise ValueError(f"Database name provided do not exists: {db_name}")
         db = client[db_name]
-        return db.list_collection_names()
+        result = db.command({"listCollections": 1,"nameOnly": True,"authorizedCollections": True,"cursor": {},})
+        collection_names = [doc["name"] for doc in result["cursor"]["firstBatch"]]
+        return collection_names
     except ServerSelectionTimeoutError:
         raise ValueError("Can not connect to MongoDB with the provided MONGO_CONN_STR.")
 
