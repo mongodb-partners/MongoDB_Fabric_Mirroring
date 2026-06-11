@@ -35,6 +35,70 @@ logger = logging.getLogger(f"{__name__}")
 #17June2025 - added NoneType manually instead of importing from types for 3.9 and lesser Python versions
 NoneType = type(None)
 
+
+def _is_null_value(item) -> bool:
+    if item is None:
+        return True
+    try:
+        return pd.isna(item)
+    except (TypeError, ValueError):
+        return False
+
+
+def _matches_expected_type(item, expected_type) -> bool:
+    if _is_null_value(item):
+        return True
+    if expected_type == bool:
+        return isinstance(item, (bool, np.bool_))
+    if expected_type == int:
+        return isinstance(item, (int, np.integer, bson.int64.Int64)) and not isinstance(
+            item, (bool, np.bool_)
+        )
+    if expected_type == float:
+        return isinstance(item, (float, np.floating, bson.Decimal128))
+    return isinstance(item, expected_type)
+
+
+def _cast_column_to_schema_dtype(col_name: str, series: pd.Series, target_dtype) -> pd.Series:
+    target_dtype_str = str(target_dtype)
+    if target_dtype_str == "boolean":
+        return series.astype("boolean")
+    if is_datetime64_any_dtype(series) or target_dtype_str.startswith("datetime"):
+        series = pd.to_datetime(series, errors="coerce", utc=True)
+        if hasattr(series.dt, "tz_localize"):
+            series = series.dt.tz_localize(None)
+        return series.astype("datetime64[ms]")
+    if str(series.dtype) != target_dtype_str:
+        return series.astype(target_dtype)
+    return series
+
+
+def finalize_dataframe_for_parquet(table_name: str, df: pd.DataFrame) -> None:
+    """
+    Enforce schema dtypes before parquet write.
+    Only stringify columns that are not governed by a typed schema entry.
+    """
+    id_col = df["_id"] if "_id" in df.columns else None
+    for col_name in df.columns:
+        if col_name == "_id":
+            continue
+        schema_of_this_column = schemas.get_table_column_schema(table_name, col_name)
+        if schema_of_this_column:
+            try:
+                df[col_name] = _cast_column_to_schema_dtype(
+                    col_name, df[col_name], schema_of_this_column[DTYPE_KEY]
+                )
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    f"Could not cast column {col_name} to schema dtype "
+                    f"{schema_of_this_column[DTYPE_KEY]}: {e}"
+                )
+        elif is_object_dtype(df[col_name]):
+            df[col_name] = df[col_name].astype(str, errors="ignore")
+    if id_col is not None:
+        df["_id"] = id_col
+
+
 def _converter_template(obj, type_name, raw_convert_func, default_value=None):
     original_type = type(obj) 
     logger.debug(f"Converting {obj} of type {original_type} to {type_name}.")
@@ -348,20 +412,13 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
         # existing column or new column with schema appended, process according to schema_of_this_column
         #if current_item_type != schema_of_this_column[TYPE_KEY]:
         expected_type = schema_of_this_column[TYPE_KEY]
-        for item in df[col_name]:
+        conversion_fcn = TYPE_TO_CONVERT_FUNCTION_MAP.get(expected_type, do_nothing)
+        if any(not _matches_expected_type(item, expected_type) for item in df[col_name]):
             current_column_name = col_name
-            if not isinstance(item, expected_type):
-                logger.debug(
-                    f" item type detected: current item is {item} of type={type(item)}, expected item type from schema= {expected_type}"
-                )
-                conversion_fcn = TYPE_TO_CONVERT_FUNCTION_MAP.get(
-                    expected_type, do_nothing
-                )
-                
-                # Set the current column name for logging
-                df[col_name] = df[col_name].apply(conversion_fcn)
-                print(df[col_name])
-                break
+            logger.debug(
+                f"Converting column {col_name} values to expected type {expected_type}"
+            )
+            df[col_name] = df[col_name].apply(conversion_fcn)
         # for index, item in enumerate(df[col_name]):
             # print(f"Row {index}: Value={item}, Type={type(item)}")
             
@@ -410,20 +467,20 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
         ##if current_dtype == datetime and schema_of_this_column[DTYPE_KEY] == object:
         #print(f"****is_datetime64_any_dtype(df['col_name']): {is_datetime64_any_dtype(df[col_name])}")
         #print(f"****is_object_dtype(schema_of_this_column[DTYPE_KEY]): {is_object_dtype(schema_of_this_column[DTYPE_KEY])}")
-        if is_datetime64_any_dtype(df[col_name]) and is_object_dtype(schema_of_this_column[DTYPE_KEY]):
-            do_nothing
-        elif current_dtype.__str__() != schema_of_this_column[DTYPE_KEY].__str__():
+        if not (
+            is_datetime64_any_dtype(df[col_name])
+            and is_object_dtype(schema_of_this_column[DTYPE_KEY])
+        ):
             try:
-                logger.debug(
-                    f"different column dtype detected1: current_dtype={current_dtype}, item type from schema 1 ={schema_of_this_column[DTYPE_KEY]}"
+                df[col_name] = _cast_column_to_schema_dtype(
+                    col_name, df[col_name], schema_of_this_column[DTYPE_KEY]
                 )
-                df[col_name] = df[col_name].astype(schema_of_this_column[DTYPE_KEY])
-                
             except (ValueError, TypeError) as e:
                 logger.warning(
                     f"An {e.__class__.__name__} was caught when trying to convert "
-                    + f"the dtype of the column {col_name} from {current_dtype} to {schema_of_this_column[DTYPE_KEY]}"
-                )  
+                    f"the dtype of the column {col_name} from {current_dtype} "
+                    f"to {schema_of_this_column[DTYPE_KEY]}"
+                )
     # Check if conversion log file exists before pushing
     print("conversion_flag: ", conversion_flag)
     conversion_log_path = os.path.join(get_table_dir(table_name), CONVERSION_LOG_FILE_NAME)

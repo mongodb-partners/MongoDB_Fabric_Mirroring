@@ -270,6 +270,9 @@ def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_fla
                 collection_name, prefix=prefix
             )
             logger.info(f"writing TEMP parquet file: {parquet_full_path_filename}")
+            schema_utils.finalize_dataframe_for_parquet(
+                collection_name, accumulative_df
+            )
             accumulative_df.to_parquet(parquet_full_path_filename)
             accumulative_df = None
     else:        
@@ -289,13 +292,9 @@ def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_fla
                 parquet_full_path_filename = get_parquet_full_path_filename(collection_name, last_parquet_file_num)
 
                 logger.info(f"writing parquet file: {parquet_full_path_filename}")
-                # Convert any remaining Object column into String
-                id_col = accumulative_df['_id']
-                obj_cols = accumulative_df.select_dtypes(include=['object']).columns
-                accumulative_df[obj_cols] = accumulative_df[obj_cols].astype(str,errors="ignore")
-                
-                #  Restore the _id column
-                accumulative_df['_id'] = id_col
+                schema_utils.finalize_dataframe_for_parquet(
+                    collection_name, accumulative_df
+                )
                 # Write the parquet file
                 accumulative_df.to_parquet(parquet_full_path_filename)
                 accumulative_df = None
