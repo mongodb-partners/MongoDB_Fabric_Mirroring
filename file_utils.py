@@ -84,7 +84,11 @@ def append_to_file(obj: Any, table_name: str, file_name: str, file_type: FileTyp
     # Create file if it doesn't exist
     if not os.path.exists(file_full_path):
         with open(file_full_path, FILETYPE_TO_WRITE_MODE_MAP.get(file_type, "w")) as f:
-            f.write(f"\n{'Column Name':<20} | {'Original Value':<20} | {'Converting Value':<20}\n{'-'*70}\n")
+            f.write(
+                f"\n{'Document _id':<24} | {'Column Name':<20} | "
+                f"{'Original Value':<24} | {'Converted Value':<20}\n"
+                f"{'-' * 94}\n"
+            )
     
     with open(file_full_path, append_mode) as file:
         if file_type == FileType.PICKLE:

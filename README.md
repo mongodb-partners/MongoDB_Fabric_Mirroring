@@ -9,6 +9,11 @@ Once started, app will continously keep track of the changes in MongoDB Atlas an
 Follow below steps if you want to create manually using Fabric UI (Step 1) and by one click on "Deploy to Azure" below (Step 2) OR you can use the Terraform template provided in the **"terraform"** folder.\
 The Terraform template also provides ability to create a **private connection between the App Service and MongoDB Atlas**.
 
+## Versioning and releases
+
+- **Runtime version** — `VERSION` in the repo root (also `constants.APP_VERSION`). Logged at mirroring startup.
+- **Change log** — See [`RELEASE_NOTES.md`](RELEASE_NOTES.md) for version history and how to create Git tags (e.g. `v1.3.0`).
+
 # Step1: MirrorDB Creation
 To create the MirrorDB, we use the Fabric UI.
 
@@ -83,8 +88,9 @@ Click below to start your App service for MongoDB to Fabric replication:
    d. _metadata.json: Has the primary key which is always "_id". This file should exist in a replicated folder/ table for mirroring to work.   
    e. _last_id: This is the "_id" value of the last record of the last initial sync batch file written to LZ. This file is deleted when initial sync is completed.   
    f. _internal_schema: This is one of the very first files written and has the schema as of the records in the collection being replicated.  
-3. The restartability of the App service/ replication is guaranteed if _resume_token file is present. This is because if initial sync is not completed and we restart the App service, the delta changes that came in the interim were being accumulated in a TEMP parquet files in the App service which will be lost. Thus, as a best practice, if the process fails before initial sync is completed, it is advised to delete all files in the collection folder using Azure Storage Explorer and restrart the process so that it can get the new max _id and start initial_sync. Once initial_sync is completed and _resume_token file is created we can restart without any worries as it will pick up changes from the last resume_token from the change stream.
-4. Also, if you are using App service option to host the solution and are observing that App Service is not reflecting the latest code or not starting the code, an observation shared to us by one of the customers was that in App configuration settings - "Always On" needs to be on, and "Session Affinity" needs to be off. Please validate this for yourself and check if it is making the App Service behave nicely :-)
+3. Internal schema is inferred from a random [`$sample`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/sample/) of the collection. By default the sample size is **below 5%** of `estimated_document_count` (4.9% in code). Set `SCHEMA_BOOTSTRAP_SAMPLE_SIZE` in `.env` to an explicit document count if you need a smaller or larger cap (still clamped to the collection size). For very large collections, prefer a bounded override to limit startup read cost.
+4. The restartability of the App service/ replication is guaranteed if _resume_token file is present. This is because if initial sync is not completed and we restart the App service, the delta changes that came in the interim were being accumulated in a TEMP parquet files in the App service which will be lost. Thus, as a best practice, if the process fails before initial sync is completed, it is advised to delete all files in the collection folder using Azure Storage Explorer and restrart the process so that it can get the new max _id and start initial_sync. Once initial_sync is completed and _resume_token file is created we can restart without any worries as it will pick up changes from the last resume_token from the change stream.
+5. Also, if you are using App service option to host the solution and are observing that App Service is not reflecting the latest code or not starting the code, an observation shared to us by one of the customers was that in App configuration settings - "Always On" needs to be on, and "Session Affinity" needs to be off. Please validate this for yourself and check if it is making the App Service behave nicely :-)
 
 ## Known Limitations
 1. This solution is based on MongoDB Atlas changestreams to capture the real time changes and sync them to Fabric OneLake. And because [changestreams are not yet supported for Timeseries collections](https://www.mongodb.com/docs/manual/core/timeseries/timeseries-limitations/), the current solution will not work for **Timeseries collections**.

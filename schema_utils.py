@@ -19,7 +19,8 @@ from constants import (
     TYPE_KEY,
     DTYPE_KEY,
     TYPES_TO_CONVERT_TO_STR,
-    COLUMN_RENAMING_FILE_NAME
+    COLUMN_RENAMING_FILE_NAME,
+    SCHEMA_BOOTSTRAP_MAX_FRACTION,
 )
 import schemas
 from file_utils import FileType, append_to_file, read_from_file
@@ -35,14 +36,34 @@ logger = logging.getLogger(f"{__name__}")
 #17June2025 - added NoneType manually instead of importing from types for 3.9 and lesser Python versions
 NoneType = type(None)
 
+INT64_MIN = np.iinfo(np.int64).min
+INT64_MAX = np.iinfo(np.int64).max
+
+current_column_name = None
+current_document_id = None
+table_name = None
+conversion_flag = False
+
 
 def _is_null_value(item) -> bool:
     if item is None:
         return True
+    # Container/array-like values are real data, not null sentinels.
+    if isinstance(item, (list, dict, tuple, np.ndarray, pd.Series, bytes, bytearray)):
+        return False
+    if isinstance(item, float) and np.isnan(item):
+        return True
     try:
-        return pd.isna(item)
+        result = pd.isna(item)
+        if isinstance(result, (np.ndarray, pd.Series)):
+            return False
+        return bool(result)
     except (TypeError, ValueError):
         return False
+
+
+def _is_non_null_scalar(item) -> bool:
+    return not _is_null_value(item)
 
 
 def _matches_expected_type(item, expected_type) -> bool:
@@ -51,16 +72,103 @@ def _matches_expected_type(item, expected_type) -> bool:
     if expected_type == bool:
         return isinstance(item, (bool, np.bool_))
     if expected_type == int:
-        return isinstance(item, (int, np.integer, bson.int64.Int64)) and not isinstance(
+        if not isinstance(item, (int, np.integer, bson.int64.Int64)) or isinstance(
             item, (bool, np.bool_)
-        )
+        ):
+            return False
+        try:
+            value = int(item)
+        except (ValueError, TypeError, OverflowError):
+            return False
+        return INT64_MIN <= value <= INT64_MAX
     if expected_type == float:
-        return isinstance(item, (float, np.floating, bson.Decimal128))
+        return isinstance(item, (float, np.floating)) and not isinstance(
+            item, (bool, np.bool_, np.integer, int)
+        )
+    if expected_type == str:
+        return isinstance(item, str)
     return isinstance(item, expected_type)
+
+
+def _needs_type_conversion(item, expected_type) -> bool:
+    try:
+        return not _matches_expected_type(item, expected_type)
+    except Exception as error:
+        logger.warning(
+            f"Type check failed for value {item!r} ({type(item).__name__}): {error}"
+        )
+        return True
+
+
+def _infer_schema_from_pandas_dtype(column_dtype) -> tuple[type, str] | None:
+    """Map a pandas dtype to (TYPE_KEY, DTYPE_KEY) when Mongo value is null."""
+    dtype_str = str(column_dtype).lower()
+    if dtype_str in {"boolean", "bool", "bool[pyarrow]"}:
+        return bool, "boolean"
+    if dtype_str in {"int64", "int32", "int16", "int8", "int64[pyarrow]"}:
+        return int, "Int64"
+    if dtype_str in {"uint64", "uint32", "uint16", "uint8"}:
+        return int, "Int64"
+    if "int" in dtype_str and "print" not in dtype_str:
+        return int, "Int64"
+    if dtype_str in {"float64", "float32", "double[pyarrow]", "float"}:
+        return float, "float64"
+    if dtype_str.startswith("datetime"):
+        return datetime, "datetime64[ms]"
+    if dtype_str in {"string", "large_string", "str", "string[pyarrow]"}:
+        return str, "object"
+    return None
+
+
+def _schema_target_is_typed(schema_of_this_column: dict) -> bool:
+    if not schema_of_this_column:
+        return False
+    expected_type = schema_of_this_column.get(TYPE_KEY)
+    target_dtype = str(schema_of_this_column.get(DTYPE_KEY, "")).lower()
+    if expected_type in {bool, int, float, datetime, date}:
+        return True
+    if target_dtype in {"boolean", "int64", "float64", "float64[pyarrow]"}:
+        return True
+    if target_dtype.startswith("datetime"):
+        return True
+    return False
+
+
+def _string_series_from_objects(series: pd.Series) -> pd.Series:
+    return series.map(
+        lambda value: ""
+        if _is_null_value(value)
+        else (
+            json.dumps(value, default=str, cls=CustomJSONEncoder)
+            if isinstance(value, (dict, list))
+            else str(value)
+        )
+    ).astype("string")
+
+
+def _resolve_string_schema_column(series: pd.Series) -> pd.Series:
+    if is_object_dtype(series):
+        return _string_series_from_objects(series)
+    return series.astype("string")
+
+
+def _typed_null_series(length: int, target_dtype) -> pd.Series:
+    target_dtype_str = str(target_dtype)
+    if target_dtype_str == "boolean":
+        return pd.Series([pd.NA] * length, dtype="boolean")
+    if target_dtype_str == "Int64":
+        return pd.Series([pd.NA] * length, dtype="Int64")
+    if target_dtype_str in ("float64", "Float64"):
+        return pd.Series([np.nan] * length, dtype="float64")
+    if target_dtype_str.startswith("datetime"):
+        return pd.Series([pd.NaT] * length, dtype="datetime64[ms]")
+    return pd.Series([pd.NA] * length, dtype="string")
 
 
 def _cast_column_to_schema_dtype(col_name: str, series: pd.Series, target_dtype) -> pd.Series:
     target_dtype_str = str(target_dtype)
+    if target_dtype_str in ("object", "string", "str") or target_dtype_str.startswith("string"):
+        return _resolve_string_schema_column(series)
     if target_dtype_str == "boolean":
         return series.astype("boolean")
     if is_datetime64_any_dtype(series) or target_dtype_str.startswith("datetime"):
@@ -68,6 +176,16 @@ def _cast_column_to_schema_dtype(col_name: str, series: pd.Series, target_dtype)
         if hasattr(series.dt, "tz_localize"):
             series = series.dt.tz_localize(None)
         return series.astype("datetime64[ms]")
+    if target_dtype_str in ("float64", "Float64"):
+        if is_object_dtype(series) or series.map(
+            lambda value: isinstance(value, (bson.Decimal128, str, bson.int64.Int64))
+        ).any():
+            series = series.map(_coerce_to_float64_value)
+        return series.astype("float64")
+    if target_dtype_str == "Int64":
+        if is_object_dtype(series):
+            series = series.map(_coerce_to_int64_value)
+        return series.astype("Int64")
     if str(series.dtype) != target_dtype_str:
         return series.astype(target_dtype)
     return series
@@ -88,59 +206,136 @@ def finalize_dataframe_for_parquet(table_name: str, df: pd.DataFrame) -> None:
                 df[col_name] = _cast_column_to_schema_dtype(
                     col_name, df[col_name], schema_of_this_column[DTYPE_KEY]
                 )
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, OverflowError) as e:
                 logger.warning(
                     f"Could not cast column {col_name} to schema dtype "
                     f"{schema_of_this_column[DTYPE_KEY]}: {e}"
                 )
+            if is_object_dtype(df[col_name]):
+                logger.warning(
+                    f"Column {col_name} is still object dtype after cast; "
+                    "applying BSON-safe coercion before parquet write"
+                )
+                try:
+                    df[col_name] = _cast_column_to_schema_dtype(
+                        col_name, df[col_name], schema_of_this_column[DTYPE_KEY]
+                    )
+                except (ValueError, TypeError, OverflowError) as e:
+                    logger.warning(
+                        f"Fallback coercion failed for column {col_name}: {e}"
+                    )
+                    if _schema_target_is_typed(schema_of_this_column):
+                        df[col_name] = _typed_null_series(
+                            len(df), schema_of_this_column[DTYPE_KEY]
+                        )
+                    else:
+                        df[col_name] = _resolve_string_schema_column(df[col_name])
         elif is_object_dtype(df[col_name]):
+            df[col_name] = df[col_name].map(
+                lambda value: float(value.to_decimal())
+                if isinstance(value, bson.Decimal128)
+                else value
+            )
             df[col_name] = df[col_name].astype(str, errors="ignore")
     if id_col is not None:
         df["_id"] = id_col
 
 
+def _log_conversion_failure(obj, type_name, default_value, error=None):
+    global conversion_flag
+    conversion_flag = True
+    doc_id = str(current_document_id) if current_document_id is not None else "unknown"
+    error_detail = f" ({error})" if error else ""
+    logger.warning(
+        f"Unsuccessful conversion for document {doc_id}, column {current_column_name}: "
+        f'"{obj}" ({type(obj).__name__}) to {type_name}{error_detail}. Using {default_value!r}.'
+    )
+    append_to_file(
+        f"\n{doc_id:<24} | {current_column_name:<20} | {str(obj):<24} | {str(default_value):<20}",
+        table_name,
+        CONVERSION_LOG_FILE_NAME,
+        FileType.TEXT,
+    )
+
+
 def _converter_template(obj, type_name, raw_convert_func, default_value=None):
-    original_type = type(obj) 
+    original_type = type(obj)
     logger.debug(f"Converting {obj} of type {original_type} to {type_name}.")
     try:
         return raw_convert_func(obj)
-    except (ValueError, TypeError):
-        logger.warning(f'Unsuccessful conversion from "{obj}" of type {original_type} to {type_name}.')
-        global conversion_flag
-        conversion_flag = True
-
-        append_to_file(
-            f"\n{current_column_name:<20} | {str(obj):<20} | {str(default_value):<20}",
-            table_name,
-            CONVERSION_LOG_FILE_NAME,
-            FileType.TEXT
-        )
+    except (ValueError, TypeError, OverflowError) as error:
+        _log_conversion_failure(obj, type_name, default_value, error)
         return default_value
+
+
+def _coerce_to_int64_value(obj):
+    if _is_null_value(obj):
+        return None
+    if isinstance(obj, list) or isinstance(obj, dict):
+        return to_json_string(obj)
+    if isinstance(obj, bson.Decimal128):
+        obj = int(obj.to_decimal())
+    elif isinstance(obj, bson.int64.Int64):
+        obj = int(obj)
+    elif isinstance(obj, (str, bytes)):
+        obj = int(obj)
+    elif isinstance(obj, (float, np.floating)):
+        if not float(obj).is_integer():
+            raise ValueError(f"non-integer float value: {obj}")
+        obj = int(obj)
+    elif isinstance(obj, (int, np.integer)) and not isinstance(obj, (bool, np.bool_)):
+        obj = int(obj)
+    else:
+        obj = int(obj)
+
+    if obj < INT64_MIN or obj > INT64_MAX:
+        raise OverflowError(f"value {obj} is outside int64 range")
+
+    return np.int64(obj)
+
+
+def _coerce_to_float64_value(obj):
+    if _is_null_value(obj):
+        return None
+    if isinstance(obj, bson.Decimal128):
+        return np.float64(obj.to_decimal())
+    if isinstance(obj, (float, np.floating)) and not isinstance(obj, (bool, np.bool_)):
+        return np.float64(obj)
+    if isinstance(obj, (int, np.integer, bson.int64.Int64)) and not isinstance(
+        obj, (bool, np.bool_)
+    ):
+        return np.float64(int(obj))
+    if isinstance(obj, (str, bytes)):
+        return np.float64(obj)
+    raise ValueError(f"cannot convert {type(obj).__name__} to float64")
+
+
+def _apply_column_conversion(df: pd.DataFrame, col_name: str, conversion_fcn):
+    global current_document_id
+    has_id = "_id" in df.columns
+    converted = []
+    for idx, item in df[col_name].items():
+        if has_id:
+            current_document_id = df.at[idx, "_id"]
+        try:
+            converted.append(conversion_fcn(item))
+        except Exception as error:
+            _log_conversion_failure(item, type(error).__name__, None, error)
+            converted.append(None)
+    return pd.Series(converted, index=df[col_name].index)
 
 
 def to_string(obj) -> str:
     if isinstance(obj, list) or isinstance(obj, dict):
         return to_json_string(obj)
     return _converter_template(
-        obj, "string", lambda o: str(o) if o is not None and not pd.isna(o) else ''
+        obj, "string", lambda o: str(o) if _is_non_null_scalar(o) else ''
     )
 
 
 def to_numpy_int64(obj) -> np.int64:
     logger.debug(f"to_numpy_int64: obj={obj}, type={type(obj)}")
-    def raw_to_numpy_int64(obj) -> np.int64:
-        # there's a rare case that converting a list of int to numpy.int64 won't
-        # raise any error, hence covering it here separately
-        if isinstance(obj, bson.Decimal128): 
-            return np.int64(obj.to_decimal())
-        if isinstance(obj, list) or isinstance(obj, dict):
-            return to_json_string(obj)
-        if obj is not None and not pd.isna(obj):
-           return np.int64(obj)
-        else:
-            return None
-
-    return _converter_template(obj, "numpy.int64", raw_to_numpy_int64)
+    return _converter_template(obj, "numpy.int64", _coerce_to_int64_value)
 
 
 def to_numpy_bool(obj) -> np.bool_:
@@ -156,14 +351,12 @@ def to_numpy_bool(obj) -> np.bool_:
 
 
 def to_numpy_float64(obj) -> np.float64:
-    if isinstance(obj, bson.Decimal128):
-        obj = str(obj)
-    return _converter_template(obj, "numpy.float64", lambda o: np.float64(o) if o is not None and not pd.isna(o) else None)
+    return _converter_template(obj, "numpy.float64", _coerce_to_float64_value)
 
 
 def to_pandas_timestamp(obj) -> pd.Timestamp:
     # return _converter_template(obj, "pandas.Timestamp", lambda o: pd.Timestamp(o))
-    return _converter_template(obj, "pandas.Timestamp", lambda o: pd.to_datetime(o, utc=True).isoformat() if o is not None and not pd.isna(o) else '')
+    return _converter_template(obj, "pandas.Timestamp", lambda o: pd.to_datetime(o, utc=True).isoformat() if _is_non_null_scalar(o) else '')
 
 
 def do_nothing(obj):
@@ -175,13 +368,13 @@ def do_nothing(obj):
 def to_datetime_iso(obj) -> str:
     if not isinstance(obj, (date, datetime)):
         return obj
-    return _converter_template(obj, "string", lambda o: o.isoformat() if o is not None and not pd.isna(o) else '')
+    return _converter_template(obj, "string", lambda o: o.isoformat() if _is_non_null_scalar(o) else '')
 
 
 def to_json_string(obj) -> str:
     if isinstance(obj, list):
         return _converter_template(obj, "string", lambda o: json.dumps([ob for ob in o], default=str, cls=CustomJSONEncoder))
-    return _converter_template(obj, "string", lambda o: json.dumps(o, default=str, cls=CustomJSONEncoder) if o is not None and not pd.isna(o) else '')
+    return _converter_template(obj, "string", lambda o: json.dumps(o, default=str, cls=CustomJSONEncoder) if _is_non_null_scalar(o) else '')
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -223,24 +416,19 @@ COLUMN_DTYPE_CONVERSION_MAP = {
 def init_column_schema(column_dtype, first_item) -> dict:
     item_type = type(first_item)
     schema_of_this_column = {}
-    if any(isinstance(first_item, t) for t in TYPES_TO_CONVERT_TO_STR):
+    if _is_null_value(first_item):
+        inferred = _infer_schema_from_pandas_dtype(column_dtype)
+        if inferred:
+            item_type, column_dtype = inferred
+        else:
+            item_type = str
+            column_dtype = "object"
+    elif any(isinstance(first_item, t) for t in TYPES_TO_CONVERT_TO_STR):
         item_type = str
-    # when encountering NoneType column, force convert it to str
-    if item_type == NoneType:
-    # if item_type is None:
-        item_type = str
-        column_dtype = "object"
-    #Diana - handling bson.Decimal128 cant be target data type as it cant be written to parquet
     if isinstance(first_item, bson.Decimal128):
         item_type = float
-    #It takes column dtype as object otherwise     
-    #    column_dtype = "object"
         column_dtype = "float64"
-    #Diana 107 comment and prints added
-    # if not column_dtype:
-    #print(f"SU: original column_dtype={column_dtype}")
     column_dtype = COLUMN_DTYPE_CONVERSION_MAP.get(column_dtype.__str__(), column_dtype)
-    #print(f"SU: converted column_dtype={column_dtype}")
     schema_of_this_column[DTYPE_KEY] = column_dtype
     schema_of_this_column[TYPE_KEY] = item_type
     logger.debug(
@@ -251,6 +439,46 @@ def init_column_schema(column_dtype, first_item) -> dict:
 
 def process_column_name(column_name: str) -> str:
     return str(column_name).replace(" ", "_")[:128]
+
+
+def _schema_bootstrap_sample_size(estimated_count: int) -> int:
+    """
+    Number of documents to $sample for internal schema inference.
+
+    Default is strictly below 5% of estimated collection size (4.9% floor),
+    which aligns with MongoDB's $sample fast path when it is the first stage
+    and N is under 5% of the collection.
+    """
+    if estimated_count <= 0:
+        return 0
+    override = os.getenv("SCHEMA_BOOTSTRAP_SAMPLE_SIZE")
+    if override is not None and override.strip() != "":
+        try:
+            n = int(override)
+        except ValueError:
+            logger.warning(
+                "Invalid SCHEMA_BOOTSTRAP_SAMPLE_SIZE=%r; using computed default",
+                override,
+            )
+            n = max(1, int(estimated_count * SCHEMA_BOOTSTRAP_MAX_FRACTION))
+        else:
+            n = max(1, min(n, estimated_count))
+        return n
+    computed = int(estimated_count * SCHEMA_BOOTSTRAP_MAX_FRACTION)
+    return max(1, min(computed, estimated_count))
+
+
+def _get_first_non_null_mongo_value(fetched_data: list[dict], column_name: str):
+    for item in fetched_data:
+        if column_name not in item:
+            continue
+        value = item.get(column_name)
+        if not _is_null_value(value):
+            return value
+    for item in fetched_data:
+        if column_name in item:
+            return item.get(column_name)
+    return None
 
 
 def _get_first_valid_id(df: pd.DataFrame, column_name: str):
@@ -285,22 +513,13 @@ def _get_first_valid_id(df: pd.DataFrame, column_name: str):
 def _get_first_item(df: pd.DataFrame, column_name: str):
     """
     Get the first non-null item from given DataFrame column.
-    This is useful when reading data in init sync, and a few (or even just one)
-    documents have an extra column, making most items of this column to be null.
-    In this case we really want to find the actual non-null item, and derive
-    data type based on it.
-
-    Args:
-        df (pd.DataFrame): The DataFrame object
-        column_name (str): The name of the column
-
-    Returns:
-        Any: the first non-null item in given DataFrame column
+    Falls back to the first row only when the entire column is null.
     """
-    first_valid_index = (
-        df[column_name].first_valid_index() or 0
-    )  # in case of first_valid_index() return None, let it be zero
-    first_valid_item = df[column_name][first_valid_index]
+    first_valid_index = df[column_name].first_valid_index()
+    if first_valid_index is not None:
+        first_valid_item = df[column_name][first_valid_index]
+    else:
+        first_valid_item = df[column_name].iloc[0]
     logger.debug(
         f"get first item {first_valid_item} of type {type(first_valid_item)} in column {column_name}"
     )
@@ -330,34 +549,39 @@ def init_table_schema(table_name: str):
         # else, init schema from collection
         client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
         db = client[os.getenv("MONGO_DB_NAME")]
-        batch_size = int(os.getenv("INIT_LOAD_BATCH_SIZE"))
         collection = db[table_name]
+        estimated_count = collection.estimated_document_count()
+        bootstrap_sample_size = _schema_bootstrap_sample_size(estimated_count)
+        logger.info(
+            "schema bootstrap for %s: estimated_count=%s, $sample size=%s",
+            table_name,
+            estimated_count,
+            bootstrap_sample_size,
+        )
         schema_of_this_table = {}
         column_renaming_of_this_table = {}
-        with collection.find().sort({"_id": 1}).limit(batch_size) as cursor:
-            fetched_data = list(cursor)
-            #print(f"fetched_data: {fetched_data}")
-            df = pd.DataFrame(fetched_data)
-            # Infering better datatypes from the dataframe
-            df = df.convert_dtypes(dtype_backend="pyarrow") 
-            for col_name in df.keys().values:
-                get_id = _get_first_valid_id(df, col_name)
-                # Fetch the exact value from mongodb using the _id, dumping into df changes the data type.
-                # projection = {col_name: 1, "_id": 0} if col_name != "_id" else {"_id": 1}
-                # data = list(collection.find({"_id": get_id}, (projection)))[0].get(col_name)
-                # logger.debug(
-                #     f"get first item {data} of type {type(data)} in column {col_name}"
-                # )
-                data = next(item.get(col_name) for item in fetched_data if item.get('_id') == get_id)
-                logger.debug(f"get first item {data} of type {type(data)} in column {col_name}")
-                column_dtype = df[col_name].dtype
-                # column_dtype = type(data)
-                # schema_of_this_column = init_column_schema(column_dtype, first_item)
-                schema_of_this_column = init_column_schema(column_dtype, data)
-                processed_col_name = process_column_name(col_name)
-                if processed_col_name != col_name:
-                    column_renaming_of_this_table[col_name] = processed_col_name
-                schema_of_this_table[processed_col_name] = schema_of_this_column
+        if bootstrap_sample_size <= 0:
+            fetched_data = []
+        else:
+            fetched_data = list(
+                collection.aggregate(
+                    [{"$sample": {"size": bootstrap_sample_size}}],
+                    allowDiskUse=True,
+                )
+            )
+        df = pd.DataFrame(fetched_data)
+        df = df.convert_dtypes(dtype_backend="pyarrow")
+        for col_name in df.keys().values:
+            data = _get_first_non_null_mongo_value(fetched_data, col_name)
+            logger.debug(
+                f"get first item {data} of type {type(data)} in column {col_name}"
+            )
+            column_dtype = df[col_name].dtype
+            schema_of_this_column = init_column_schema(column_dtype, data)
+            processed_col_name = process_column_name(col_name)
+            if processed_col_name != col_name:
+                column_renaming_of_this_table[col_name] = processed_col_name
+            schema_of_this_table[processed_col_name] = schema_of_this_column
         schemas.init_table_schema(table_name, schema_of_this_table)
         schemas.init_column_renaming(table_name, column_renaming_of_this_table)
 
@@ -366,6 +590,9 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
     global current_column_name, table_name, conversion_flag
     table_name = table_name_param
     conversion_flag = False
+    typed_df = df.convert_dtypes(dtype_backend="pyarrow")
+    for column in typed_df.columns:
+        df[column] = typed_df[column]
     for col_name in df.keys().values:
         current_dtype = df[col_name].dtype
         current_first_item = _get_first_item(df, col_name)
@@ -413,12 +640,12 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
         #if current_item_type != schema_of_this_column[TYPE_KEY]:
         expected_type = schema_of_this_column[TYPE_KEY]
         conversion_fcn = TYPE_TO_CONVERT_FUNCTION_MAP.get(expected_type, do_nothing)
-        if any(not _matches_expected_type(item, expected_type) for item in df[col_name]):
+        if any(_needs_type_conversion(item, expected_type) for item in df[col_name]):
             current_column_name = col_name
             logger.debug(
                 f"Converting column {col_name} values to expected type {expected_type}"
             )
-            df[col_name] = df[col_name].apply(conversion_fcn)
+            df[col_name] = _apply_column_conversion(df, col_name, conversion_fcn)
         # for index, item in enumerate(df[col_name]):
             # print(f"Row {index}: Value={item}, Type={type(item)}")
             
@@ -450,7 +677,7 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
                 #df[col_name] = df[col_name].dt.floor('ms')
                 df[col_name] = df[col_name].dt.tz_localize(None)
                 df[col_name] = df[col_name].astype("datetime64[ms]")      
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, OverflowError) as e:
                 logger.warning(
                     f"An {e.__class__.__name__} was caught when trying to convert "
                     + f"the dtype of the column {col_name} from {current_dtype} to datetime64[ms]"
@@ -475,7 +702,7 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
                 df[col_name] = _cast_column_to_schema_dtype(
                     col_name, df[col_name], schema_of_this_column[DTYPE_KEY]
                 )
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, OverflowError) as e:
                 logger.warning(
                     f"An {e.__class__.__name__} was caught when trying to convert "
                     f"the dtype of the column {col_name} from {current_dtype} "

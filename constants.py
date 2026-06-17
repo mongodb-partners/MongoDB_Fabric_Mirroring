@@ -1,6 +1,19 @@
+from pathlib import Path
+
 import bson
 import pandas as pd
 
+
+def _read_app_version() -> str:
+    """Single-line semantic version from repo root VERSION file."""
+    try:
+        text = (Path(__file__).resolve().parent / "VERSION").read_text(encoding="utf-8")
+        return (text.strip() or "0.0.0").splitlines()[0].strip()
+    except OSError:
+        return "0.0.0"
+
+
+APP_VERSION = _read_app_version()
 
 TYPES_TO_CONVERT_TO_STR = [
     bson.objectid.ObjectId,
@@ -14,6 +27,11 @@ DATA_FILES_PATH = "data_files"
 FILE_NAME_LENGTH = 20
 
 MONGODB_READING_BATCH_SIZE = 100000
+
+# Default schema bootstrap sample = floor(estimated_count * SCHEMA_BOOTSTRAP_MAX_FRACTION),
+# capped below 5% of the collection so $sample can use the efficient pseudo-random path when possible.
+# See https://www.mongodb.com/docs/manual/reference/operator/aggregation/sample/
+SCHEMA_BOOTSTRAP_MAX_FRACTION = 0.049
 
 METADATA_FILE_NAME = "_metadata.json"
 

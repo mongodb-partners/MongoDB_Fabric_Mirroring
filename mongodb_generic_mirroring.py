@@ -12,7 +12,8 @@ from listening import listening
 from schema_utils import init_table_schema
 from constants import (
     METADATA_FILE_NAME,
-    PARTNER_EVENTS_FILE_NAME
+    PARTNER_EVENTS_FILE_NAME,
+    APP_VERSION,
 )
 from push_file_to_lz import push_file_to_lz
 from file_utils import FileType, read_from_file
@@ -38,6 +39,7 @@ def mirror():
     root_logger.addHandler(file_handler)
 
     logger = logging.getLogger(__name__)
+    logger.info("MongoDB Fabric Mirroring starting, version=%s", APP_VERSION)
     if (
         not os.getenv("MONGO_CONN_STR")
         or not os.getenv("MONGO_DB_NAME")
