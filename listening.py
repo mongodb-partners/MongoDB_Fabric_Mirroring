@@ -196,7 +196,7 @@ def listening(collection_name: str):
             pymongo.errors.ConnectionFailure,
             pymongo.errors.CursorNotFound,
             pymongo.errors.OperationFailure,
-            pymongo.Error,
+            PyMongoError,
         ) as exc:
             # Detect non-resumable ChangeStreamHistoryLost / stale resume token.
             is_non_resumable = (
