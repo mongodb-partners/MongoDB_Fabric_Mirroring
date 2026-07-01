@@ -32,6 +32,8 @@ MONGODB_READING_BATCH_SIZE = 100000
 # capped below 5% of the collection so $sample can use the efficient pseudo-random path when possible.
 # See https://www.mongodb.com/docs/manual/reference/operator/aggregation/sample/
 SCHEMA_BOOTSTRAP_MAX_FRACTION = 0.049
+# $sample retries before falling back to find().sort(_id).limit(N)
+SCHEMA_BOOTSTRAP_SAMPLE_MAX_ATTEMPTS = 4
 
 METADATA_FILE_NAME = "_metadata.json"
 

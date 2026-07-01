@@ -2,6 +2,7 @@ from datetime import date, datetime
 import os
 import json
 import logging
+import time
 #17June2025 - doesnt work for 3.9 and lesser Python versions
 #from types import NoneType
 import bson.int64
@@ -21,6 +22,7 @@ from constants import (
     TYPES_TO_CONVERT_TO_STR,
     COLUMN_RENAMING_FILE_NAME,
     SCHEMA_BOOTSTRAP_MAX_FRACTION,
+    SCHEMA_BOOTSTRAP_SAMPLE_MAX_ATTEMPTS,
 )
 import schemas
 from file_utils import FileType, append_to_file, read_from_file
@@ -468,6 +470,119 @@ def _schema_bootstrap_sample_size(estimated_count: int) -> int:
     return max(1, min(computed, estimated_count))
 
 
+def _is_sample_stage_failure(exc: Exception) -> bool:
+    if not isinstance(exc, pymongo.errors.OperationFailure):
+        return False
+    msg = str(exc).lower()
+    return "$sample" in msg or "non-duplicate document" in msg
+
+
+def _sample_size_for_attempt(initial_sample_size: int, attempt: int) -> int:
+    """Reduce by 25% of the initial size on each attempt (attempt is 1-based)."""
+    reduction = 0.25 * (attempt - 1) * initial_sample_size
+    return max(1, int(initial_sample_size - reduction))
+
+
+def _fetch_bootstrap_sample_documents(
+    collection,
+    initial_sample_size: int,
+    *,
+    table_name: str,
+) -> list[dict]:
+    """
+    Load documents for schema bootstrap.
+
+    Tries $sample up to SCHEMA_BOOTSTRAP_SAMPLE_MAX_ATTEMPTS times with a
+    decreasing size (initial, -25%, -50%, -75% of initial). On persistent
+  failure, falls back to find().sort(_id).limit(initial_sample_size).
+    """
+    if initial_sample_size <= 0:
+        return []
+
+    last_error: Exception | None = None
+    for attempt in range(1, SCHEMA_BOOTSTRAP_SAMPLE_MAX_ATTEMPTS + 1):
+        sample_size = _sample_size_for_attempt(initial_sample_size, attempt)
+        try:
+            logger.info(
+                "schema bootstrap for %s: $sample attempt %s/%s, size=%s",
+                table_name,
+                attempt,
+                SCHEMA_BOOTSTRAP_SAMPLE_MAX_ATTEMPTS,
+                sample_size,
+            )
+            return list(
+                collection.aggregate(
+                    [{"$sample": {"size": sample_size}}],
+                    allowDiskUse=True,
+                )
+            )
+        except Exception as exc:
+            last_error = exc
+            if _is_sample_stage_failure(exc):
+                logger.warning(
+                    "schema bootstrap for %s: $sample attempt %s failed (size=%s): %s",
+                    table_name,
+                    attempt,
+                    sample_size,
+                    exc,
+                )
+            else:
+                logger.warning(
+                    "schema bootstrap for %s: aggregate attempt %s failed (size=%s): %s",
+                    table_name,
+                    attempt,
+                    sample_size,
+                    exc,
+                )
+            if attempt < SCHEMA_BOOTSTRAP_SAMPLE_MAX_ATTEMPTS:
+                time.sleep(0.5)
+
+    logger.warning(
+        "schema bootstrap for %s: $sample failed after %s attempts; "
+        "falling back to find().sort(_id).limit(%s). Last error: %s",
+        table_name,
+        SCHEMA_BOOTSTRAP_SAMPLE_MAX_ATTEMPTS,
+        initial_sample_size,
+        last_error,
+    )
+    try:
+        return list(
+            collection.find().sort({"_id": 1}).limit(initial_sample_size)
+        )
+    except Exception as exc:
+        logger.error(
+            "schema bootstrap for %s: find fallback failed: %s",
+            table_name,
+            exc,
+            exc_info=True,
+        )
+        raise
+
+
+def _build_schema_from_documents(
+    fetched_data: list[dict],
+) -> tuple[dict, dict]:
+    schema_of_this_table = {}
+    column_renaming_of_this_table = {}
+    if not fetched_data:
+        return schema_of_this_table, column_renaming_of_this_table
+
+    df = pd.DataFrame(fetched_data)
+    df = df.convert_dtypes(dtype_backend="pyarrow")
+    for col_name in df.keys().values:
+        data = _get_first_non_null_mongo_value(fetched_data, col_name)
+        logger.debug(
+            f"get first item {data} of type {type(data)} in column {col_name}"
+        )
+        column_dtype = df[col_name].dtype
+        schema_of_this_column = init_column_schema(column_dtype, data)
+        processed_col_name = process_column_name(col_name)
+        if processed_col_name != col_name:
+            column_renaming_of_this_table[col_name] = processed_col_name
+        schema_of_this_table[processed_col_name] = schema_of_this_column
+    return schema_of_this_table, column_renaming_of_this_table
+
+
 def _get_first_non_null_mongo_value(fetched_data: list[dict], column_name: str):
     for item in fetched_data:
         if column_name not in item:
@@ -547,43 +662,36 @@ def init_table_schema(table_name: str):
             schemas.init_column_renaming(table_name, table_column_renaming)
     else:
         # else, init schema from collection
-        client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
-        db = client[os.getenv("MONGO_DB_NAME")]
-        collection = db[table_name]
-        estimated_count = collection.estimated_document_count()
-        bootstrap_sample_size = _schema_bootstrap_sample_size(estimated_count)
-        logger.info(
-            "schema bootstrap for %s: estimated_count=%s, $sample size=%s",
-            table_name,
-            estimated_count,
-            bootstrap_sample_size,
-        )
-        schema_of_this_table = {}
-        column_renaming_of_this_table = {}
-        if bootstrap_sample_size <= 0:
-            fetched_data = []
-        else:
-            fetched_data = list(
-                collection.aggregate(
-                    [{"$sample": {"size": bootstrap_sample_size}}],
-                    allowDiskUse=True,
-                )
+        try:
+            client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
+            db = client[os.getenv("MONGO_DB_NAME")]
+            collection = db[table_name]
+            estimated_count = collection.estimated_document_count()
+            bootstrap_sample_size = _schema_bootstrap_sample_size(estimated_count)
+            logger.info(
+                "schema bootstrap for %s: estimated_count=%s, target sample size=%s",
+                table_name,
+                estimated_count,
+                bootstrap_sample_size,
             )
-        df = pd.DataFrame(fetched_data)
-        df = df.convert_dtypes(dtype_backend="pyarrow")
-        for col_name in df.keys().values:
-            data = _get_first_non_null_mongo_value(fetched_data, col_name)
-            logger.debug(
-                f"get first item {data} of type {type(data)} in column {col_name}"
+            fetched_data = _fetch_bootstrap_sample_documents(
+                collection,
+                bootstrap_sample_size,
+                table_name=table_name,
             )
-            column_dtype = df[col_name].dtype
-            schema_of_this_column = init_column_schema(column_dtype, data)
-            processed_col_name = process_column_name(col_name)
-            if processed_col_name != col_name:
-                column_renaming_of_this_table[col_name] = processed_col_name
-            schema_of_this_table[processed_col_name] = schema_of_this_column
-        schemas.init_table_schema(table_name, schema_of_this_table)
-        schemas.init_column_renaming(table_name, column_renaming_of_this_table)
+            schema_of_this_table, column_renaming_of_this_table = (
+                _build_schema_from_documents(fetched_data)
+            )
+            schemas.init_table_schema(table_name, schema_of_this_table)
+            schemas.init_column_renaming(table_name, column_renaming_of_this_table)
+        except Exception as exc:
+            logger.error(
+                "schema bootstrap failed for %s; collection will still start mirroring "
+                "and schema may evolve from init/delta batches: %s",
+                table_name,
+                exc,
+                exc_info=True,
+            )
 
 
 def process_dataframe(table_name_param: str, df: pd.DataFrame):

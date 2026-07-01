@@ -4,8 +4,7 @@ import time
 import logging
 import os
 import pickle
-from threading import Thread
-import threading
+import logging
 from pymongo.errors import PyMongoError
 from datetime import datetime, timedelta
 
@@ -27,10 +26,10 @@ from constants import (
 from utils import to_string, get_parquet_full_path_filename, get_temp_parquet_full_path_filename, get_table_dir
 from push_file_to_lz import push_file_to_lz
 #from flags import get_init_flag
-from init_sync import init_sync
 import schemas
 import schema_utils
 from file_utils import FileType, read_from_file, write_to_file
+
 
 def listening(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
@@ -69,8 +68,6 @@ def listening(collection_name: str):
     init_sync_stat_flag = None
     last_sync_time: float | None = None
 
-    # start init sync after we get cursor from Change Stream
-    Thread(target=init_sync, args=(collection_name,)).start()
     logger.info(f"start listening to change stream for collection {collection_name}")
     
     # New main loop logic

@@ -116,18 +116,24 @@ def mirror():
                 output_file.write(partner_events_content)
             push_file_to_lz(partner_events_output_path, collection_name)
 
-        init_table_schema(collection_name)
+        try:
+            init_table_schema(collection_name)
+        except Exception:
+            logger.exception(
+                "schema bootstrap failed for collection %s; continuing with init sync",
+                collection_name,
+            )
+
+        try:
+            init_sync(collection_name)
+        except Exception:
+            logger.exception(
+                "init sync failed for collection %s; skipping change stream listening",
+                collection_name,
+            )
+            continue
 
         Thread(target=listening, args=(collection_name,)).start()
-        # listener_thread = Thread(target=listening, args=(collection_name,))
-        # listener_thread.start()
-        # threads.append(listener_thread)
-
-        # Moved the starting of init_sync to listening so as not to miss any records which may come by the time we start init_sync
-        # Thread(target=init_sync, args=(collection_name,)).start()
-        # init_thread = Thread(target=init_sync, args=(collection_name,))
-        # init_thread.start()
-        # threads.append(init_thread)
 
     # for thread in threads:
     #     thread.join()

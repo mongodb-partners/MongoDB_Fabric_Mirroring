@@ -32,6 +32,26 @@ Adjust branch name as needed. Existing lightweight tags in this repo include `v1
 
 ---
 
+## [1.4.0] — 2026-06-17
+
+### Added
+
+- **`SCHEMA_BOOTSTRAP_SAMPLE_MAX_ATTEMPTS`** (`4`): `$sample` retries with decreasing size (100%, 75%, 50%, 25% of initial) before falling back to `find().sort(_id).limit(N)`.
+- **`_fetch_bootstrap_sample_documents`** and **`_build_schema_from_documents`** in `schema_utils.py` for resilient schema bootstrap.
+
+### Changed
+
+- **Startup order**: `init_sync` runs **synchronously** in `mirror()` before the listening thread starts for each collection.
+- **Failed init sync**: change-stream listening is **not** started for that collection; mirroring continues with the next collection in the list.
+- Schema bootstrap errors are logged; init sync may still run if bootstrap used the find fallback or partial schema.
+
+### Fixed
+
+- **`listening.py`**: `pymongo.Error` replaced with **`PyMongoError`** (valid base exception in PyMongo 4.x).
+- **`$sample` sporadic failures** (e.g. “could not find a non-duplicate document after 100”) no longer crash schema bootstrap or block other collections.
+
+---
+
 ## [1.3.0] — 2026-06-17
 
 ### Added
