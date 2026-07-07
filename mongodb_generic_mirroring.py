@@ -15,7 +15,7 @@ from constants import (
     PARTNER_EVENTS_FILE_NAME,
     APP_VERSION,
 )
-from push_file_to_lz import push_file_to_lz
+from push_file_to_lz import push_file_to_lz, get_file_from_lz_root, push_file_to_lz_root
 from file_utils import FileType, read_from_file
 
 def mirror():
@@ -83,6 +83,8 @@ def mirror():
     for non_exists_collection in removed_collections:
         logger.warning(f"removed non-exists collection {non_exists_collection}")
 
+    __ensure_partner_events_in_lz(logger)
+
     for collection_name in collection_list:
     #>>># changes to write metadata.json a the first file - 6Mar2025
         metadata_file_exists = read_from_file(
@@ -94,27 +96,6 @@ def mirror():
                 )
             logger.info("writing metadata file to LZ")
             push_file_to_lz(metadata_json_path, collection_name)
-
-        partner_events_file_exists = read_from_file(
-            collection_name, PARTNER_EVENTS_FILE_NAME, FileType.TEXT
-        )
-        if not partner_events_file_exists:
-            partner_events_template_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "_partnerEvents_template.json"
-            )
-            partner_events_output_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), PARTNER_EVENTS_FILE_NAME
-            )
-            logger.info("writing _partnerEvents.json file to LZ")
-            with open(partner_events_template_path, 'r') as f:
-                partner_events_content = f.read()
-            partner_events_content = partner_events_content \
-                .replace('${MONGO_DB_NAME}', os.getenv('MONGO_DB_NAME', '')) \
-                .replace('${MONGO_COLLECTION}', collection_name) \
-                .replace('${LZ_URL}', os.getenv('LZ_URL', ''))
-            with open(partner_events_output_path, 'w') as output_file:
-                output_file.write(partner_events_content)
-            push_file_to_lz(partner_events_output_path, collection_name)
 
         try:
             init_table_schema(collection_name)
@@ -159,6 +140,31 @@ def mirror():
     
 
 # New class:
+def __ensure_partner_events_in_lz(logger: logging.Logger) -> None:
+    """
+    Write _partnerEvents.json once at the landing zone root (mirrored database level).
+    Per Microsoft open mirroring, this file is not per-table and should not include
+    a single collection name.
+    """
+    response_status_code, _ = get_file_from_lz_root(PARTNER_EVENTS_FILE_NAME)
+    if response_status_code == 200:
+        logger.info("_partnerEvents.json already present at landing zone root")
+        return
+
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    partner_events_template_path = os.path.join(app_dir, "_partnerEvents_template.json")
+    partner_events_output_path = os.path.join(app_dir, PARTNER_EVENTS_FILE_NAME)
+    logger.info("writing _partnerEvents.json to landing zone root")
+    with open(partner_events_template_path, "r", encoding="utf-8") as template_file:
+        partner_events_content = template_file.read()
+    partner_events_content = partner_events_content.replace(
+        "${MONGO_DB_NAME}", os.getenv("MONGO_DB_NAME", "")
+    ).replace("${LZ_URL}", os.getenv("LZ_URL", ""))
+    with open(partner_events_output_path, "w", encoding="utf-8") as output_file:
+        output_file.write(partner_events_content)
+    push_file_to_lz_root(partner_events_output_path)
+
+
 def __get_all_collections() -> list[str]:
     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
     # check database existence

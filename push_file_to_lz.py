@@ -10,6 +10,14 @@ import constants
 logger = logging.getLogger(__name__)
 
 
+def _lz_folder_url(lz_url: str, table_name: str = "") -> str:
+    """Landing zone folder URL; empty table_name = mirrored database root (LandingZone/)."""
+    base = lz_url.rstrip("/")
+    if not table_name:
+        return base + "/"
+    return f"{base}/{table_name}/"
+
+
 def push_file_to_lz(
     filepath: str,
     table_name: str,
@@ -89,7 +97,7 @@ def __patch_file(access_token, file_path, lz_url, table_name):
     try:
         file_name = os.path.basename(file_path)
         file_name_temp = file_name
-        base_url = lz_url + table_name + "/"
+        base_url = _lz_folder_url(lz_url, table_name)
         if not file_name.startswith('_'):
             file_name_temp = '_' + file_name
         else:
@@ -141,7 +149,7 @@ def get_file_from_lz(table_name, file_name):
         os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID")
     )
     token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
-    url = os.getenv("LZ_URL") + table_name + "/" + file_name
+    url = _lz_folder_url(os.getenv("LZ_URL"), table_name) + file_name
     response = requests.get(url, headers=token_headers)
     response_status_code = response.status_code
     if response_status_code != 200:
@@ -157,6 +165,16 @@ def get_file_from_lz(table_name, file_name):
     return (response_status_code, response)
 
 
+def get_file_from_lz_root(file_name: str):
+    """Read a file from the landing zone root (mirrored database level, not per table)."""
+    return get_file_from_lz("", file_name)
+
+
+def push_file_to_lz_root(filepath: str):
+    """Push a file to the landing zone root (mirrored database level, not per table)."""
+    push_file_to_lz(filepath, "")
+
+
 def delete_file_from_lz(table_name, file_name):
     logger.info(
         f"trying to delete file from lz. table_name={table_name}, file_name={file_name}"
@@ -165,7 +183,7 @@ def delete_file_from_lz(table_name, file_name):
         os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID")
     )
     token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
-    url = os.getenv("LZ_URL") + table_name + "/" + file_name
+    url = _lz_folder_url(os.getenv("LZ_URL"), table_name) + file_name
     response = requests.delete(url, headers=token_headers)
     logger.debug(f"delete response: {response}")
     return response.status_code if response.status_code == 200 else None

@@ -32,6 +32,19 @@ Adjust branch name as needed. Existing lightweight tags in this repo include `v1
 
 ---
 
+## [1.4.1] — 2026-07-07
+
+### Changed
+
+- **`_partnerEvents.json`** is written once at the **landing zone root** (mirrored database level), not per collection folder.
+- Partner events template no longer includes a **`MongoDBCollection`** field.
+
+### Fixed
+
+- **`push_file_to_lz.py`**: added **`_lz_folder_url`**, **`get_file_from_lz_root`**, and **`push_file_to_lz_root`** so root-level LZ files use a correct URL path.
+
+---
+
 ## [1.4.0] — 2026-06-17
 
 ### Added
