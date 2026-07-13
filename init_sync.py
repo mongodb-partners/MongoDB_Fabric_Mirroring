@@ -31,7 +31,8 @@ from push_file_to_lz import push_file_to_lz
 # not required as now init_sync stat is stored in LZ
 #from flags import set_init_flag, clear_init_flag
 from file_utils import FileType, read_from_file, write_to_file, delete_file
-from mongo_cluster_time import get_cluster_time, start_snapshot_session_at
+##from mongo_cluster_time import get_cluster_time, start_snapshot_session_at
+from mongo_cluster_time import get_cluster_time
 
 
 def init_sync(collection_name: str):
@@ -95,7 +96,8 @@ def init_sync(collection_name: str):
 
     count = collection.estimated_document_count()
 
-    with start_snapshot_session_at(client, cluster_time) as session:
+    ##with start_snapshot_session_at(client, cluster_time) as session:  - Diana
+    with client.start_session() as session:
         # use max_id as the mechanism to set the stopping point of init sync
         max_id_from_file = read_from_file(
             collection_name, INIT_SYNC_MAX_ID_FILE_NAME, FileType.PICKLE
