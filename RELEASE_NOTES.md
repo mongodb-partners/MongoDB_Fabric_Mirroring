@@ -32,6 +32,22 @@ Adjust branch name as needed. Existing lightweight tags in this repo include `v1
 
 ---
 
+## [1.4.2] — 2026-07-13
+
+### Added
+
+- **Cluster-time handoff** between initial sync and change streams:
+  - Capture MongoDB `operationTime` **N** at init start and persist as `_init_cluster_time.pkl`.
+  - Init sync reads use a **snapshot** session pinned to **`atClusterTime: N`**.
+  - Change stream opens with **`startAtOperationTime: N+1`** when no resume token exists.
+- Helpers in **`mongo_cluster_time.py`** (`get_cluster_time`, `next_timestamp`, `start_snapshot_session_at`).
+
+### Fixed
+
+- Documents written after the init snapshot but before the listening thread started were previously missed when the change stream opened from the latest oplog position.
+
+---
+
 ## [1.4.1] — 2026-07-07
 
 ### Changed

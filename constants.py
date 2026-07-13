@@ -67,6 +67,9 @@ INIT_SYNC_LAST_ID_FILE_NAME = "_last_id.pkl"
 
 INIT_SYNC_MAX_ID_FILE_NAME = "_max_id.pkl"
 
+# Cluster time N captured at init start; change stream resumes at N+1 when no resume token.
+INIT_SYNC_CLUSTER_TIME_FILE_NAME = "_init_cluster_time.pkl"
+
 DELTA_SYNC_CACHE_PARQUET_FILE_NAME = "_incremental_change_cache.parquet"
 
 DELTA_SYNC_RESUME_TOKEN_FILE_NAME = "_resume_token.pkl"

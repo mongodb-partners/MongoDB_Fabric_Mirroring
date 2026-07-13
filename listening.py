@@ -8,6 +8,8 @@ import logging
 from pymongo.errors import PyMongoError
 from datetime import datetime, timedelta
 
+from bson.timestamp import Timestamp
+
 from constants import (
     ROW_MARKER_COLUMN_NAME,
     CHANGE_STREAM_OPERATION_MAP,
@@ -19,6 +21,7 @@ from constants import (
     DELTA_SYNC_RESUME_TOKEN_FILE_NAME,
 # added the two new files to save the initial sync status and last parquet file number
     INIT_SYNC_STATUS_FILE_NAME,
+    INIT_SYNC_CLUSTER_TIME_FILE_NAME,
     LAST_PARQUET_FILE_NUMBER,
     DTYPE_KEY,
     TYPE_KEY,
@@ -29,6 +32,7 @@ from push_file_to_lz import push_file_to_lz
 import schemas
 import schema_utils
 from file_utils import FileType, read_from_file, write_to_file
+from mongo_cluster_time import next_timestamp
 
 
 def listening(collection_name: str):
@@ -47,6 +51,17 @@ def listening(collection_name: str):
     if resume_token:
         logger.info(
             f"interrupted incremental sync detected, continuing with resume_token={resume_token}"
+        )
+
+    init_cluster_time = read_from_file(
+        collection_name, INIT_SYNC_CLUSTER_TIME_FILE_NAME, FileType.PICKLE
+    )
+    if not isinstance(init_cluster_time, Timestamp):
+        init_cluster_time = None
+    else:
+        logger.info(
+            "loaded init cluster time N=%s for change stream handoff",
+            init_cluster_time,
         )
 
     #MongoDB connection and data info
@@ -72,20 +87,32 @@ def listening(collection_name: str):
     
     # New main loop logic
     while True:
-        # Build watch options each time we open a new stream
+        # Build watch options each time we open a new stream.
+        # Prefer resume_after when available; otherwise start at N+1 from init snapshot.
         watch_kwargs = dict(
             full_document="updateLookup",
             max_await_time_ms=20000,
         )
+        start_at_operation_time = None
         if resume_token:
             watch_kwargs["resume_after"] = resume_token
+        elif init_cluster_time is not None:
+            start_at_operation_time = next_timestamp(init_cluster_time)
+            watch_kwargs["start_at_operation_time"] = start_at_operation_time
+        else:
+            logger.warning(
+                "no resume token or init cluster time for %s; "
+                "opening change stream from latest (possible data gap)",
+                collection_name,
+            )
 
         try:
             with collection.watch(**watch_kwargs) as stream:
                 logger.info(
-                    "opened change stream for %s with resume_token=%s",
+                    "opened change stream for %s with resume_token=%s start_at_operation_time=%s",
                     collection_name,
                     resume_token,
+                    start_at_operation_time,
                 )
                 last_action_time = datetime.now()
                 # Use try_next so we can flush on time threshold even without new events
@@ -167,8 +194,8 @@ def listening(collection_name: str):
                         accumulative_df = pd.concat(
                             [accumulative_df, df], ignore_index=True
                         )
-                        logger.info("concat accumulative_df result:")
-                        logger.info(accumulative_df)
+                        logger.debug("concat accumulative_df result:")
+                        logger.debug(accumulative_df)
                     else:
                         logger.info("df created")
                         accumulative_df = df
@@ -205,13 +232,23 @@ def listening(collection_name: str):
             )
 
             if is_non_resumable:
-                logger.error(
-                    "Non-resumable Change Stream error (ChangeStreamHistoryLost) for collection %s: %s. "
-                    "Clearing resume token and restarting from latest position.",
-                    collection_name,
-                    exc,
-                    exc_info=True,
-                )
+                if init_cluster_time is not None:
+                    logger.error(
+                        "Non-resumable Change Stream error (ChangeStreamHistoryLost) for collection %s: %s. "
+                        "Clearing resume token; will reopen with startAtOperationTime=N+1 "
+                        "(history may still be too old — gap possible).",
+                        collection_name,
+                        exc,
+                        exc_info=True,
+                    )
+                else:
+                    logger.error(
+                        "Non-resumable Change Stream error (ChangeStreamHistoryLost) for collection %s: %s. "
+                        "Clearing resume token and restarting from latest position.",
+                        collection_name,
+                        exc,
+                        exc_info=True,
+                    )
 
                 # Drop the bad resume token so the next loop does *not* send resume_after.
                 resume_token = None
