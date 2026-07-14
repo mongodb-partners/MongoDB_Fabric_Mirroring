@@ -817,7 +817,7 @@ def process_dataframe(table_name_param: str, df: pd.DataFrame):
                     f"to {schema_of_this_column[DTYPE_KEY]}"
                 )
     # Check if conversion log file exists before pushing
-    print("conversion_flag: ", conversion_flag)
+    logger.debug("conversion_flag: %s", conversion_flag)
     conversion_log_path = os.path.join(get_table_dir(table_name), CONVERSION_LOG_FILE_NAME)
     if os.path.exists(conversion_log_path) and conversion_flag:
         push_file_to_lz(conversion_log_path, table_name)

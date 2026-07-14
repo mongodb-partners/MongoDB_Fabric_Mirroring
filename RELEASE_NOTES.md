@@ -32,6 +32,18 @@ Adjust branch name as needed. Existing lightweight tags in this repo include `v1
 
 ---
 
+## [1.4.3] — 2026-07-14
+
+### Changed
+
+- **Init sync** no longer uses a snapshot/`atClusterTime` session. It still captures cluster time **N** at start (persisted as `_init_cluster_time.pkl`) and runs reads on a normal client session; the change stream still opens at **`startAtOperationTime: N+1`** when no resume token exists.
+
+### Fixed
+
+- **`schema_utils.py`**: replace leftover `print` of `conversion_flag` with `logger.debug`.
+
+---
+
 ## [1.4.2] — 2026-07-13
 
 ### Added

@@ -78,7 +78,7 @@ def init_sync(collection_name: str):
     db = client[os.getenv("MONGO_DB_NAME")]
     collection = db[collection_name]
 
-    # Capture or restore cluster time N for snapshot reads and change-stream handoff.
+    # Capture or restore cluster time N for change-stream handoff (startAtOperationTime N+1).
     cluster_time = read_from_file(
         collection_name, INIT_SYNC_CLUSTER_TIME_FILE_NAME, FileType.PICKLE
     )

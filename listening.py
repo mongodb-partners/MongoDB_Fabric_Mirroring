@@ -88,7 +88,7 @@ def listening(collection_name: str):
     # New main loop logic
     while True:
         # Build watch options each time we open a new stream.
-        # Prefer resume_after when available; otherwise start at N+1 from init snapshot.
+        # Prefer resume_after when available; otherwise start at N+1 from init cluster time.
         watch_kwargs = dict(
             full_document="updateLookup",
             max_await_time_ms=20000,
