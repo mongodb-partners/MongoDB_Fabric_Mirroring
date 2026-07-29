@@ -1,7 +1,7 @@
 import logging.handlers
 import os
 import logging
-from threading import Thread
+from threading import Event, Thread
 import pymongo
 from pymongo.errors import ServerSelectionTimeoutError
 from dotenv import load_dotenv
@@ -116,12 +116,9 @@ def mirror():
 
         Thread(target=listening, args=(collection_name,)).start()
 
-    # for thread in threads:
-    #     thread.join()
-    while True:
-        cmd = input()
-        if cmd.lower() == "quit":
-            os._exit(0)
+    # Keep the mirror thread alive for App Service / non-interactive hosts.
+    # Do not use input(): stdin is closed there and raises EOFError.
+    Event().wait()
 
 
 # def __get_all_collections() -> list[str]:
