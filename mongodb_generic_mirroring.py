@@ -12,9 +12,10 @@ from listening import listening
 from schema_utils import init_table_schema
 from constants import (
     METADATA_FILE_NAME,
-    PARTNER_EVENTS_FILE_NAME
+    PARTNER_EVENTS_FILE_NAME,
+    APP_VERSION,
 )
-from push_file_to_lz import push_file_to_lz
+from push_file_to_lz import push_file_to_lz, get_file_from_lz_root, push_file_to_lz_root
 from file_utils import FileType, read_from_file
 
 def mirror():
@@ -38,6 +39,7 @@ def mirror():
     root_logger.addHandler(file_handler)
 
     logger = logging.getLogger(__name__)
+    logger.info("MongoDB Fabric Mirroring starting, version=%s", APP_VERSION)
     if (
         not os.getenv("MONGO_CONN_STR")
         or not os.getenv("MONGO_DB_NAME")
@@ -81,6 +83,8 @@ def mirror():
     for non_exists_collection in removed_collections:
         logger.warning(f"removed non-exists collection {non_exists_collection}")
 
+    __ensure_partner_events_in_lz(logger)
+
     for collection_name in collection_list:
     #>>># changes to write metadata.json a the first file - 6Mar2025
         metadata_file_exists = read_from_file(
@@ -93,39 +97,24 @@ def mirror():
             logger.info("writing metadata file to LZ")
             push_file_to_lz(metadata_json_path, collection_name)
 
-        partner_events_file_exists = read_from_file(
-            collection_name, PARTNER_EVENTS_FILE_NAME, FileType.TEXT
-        )
-        if not partner_events_file_exists:
-            partner_events_template_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "_partnerEvents_template.json"
+        try:
+            init_table_schema(collection_name)
+        except Exception:
+            logger.exception(
+                "schema bootstrap failed for collection %s; continuing with init sync",
+                collection_name,
             )
-            partner_events_output_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), PARTNER_EVENTS_FILE_NAME
-            )
-            logger.info("writing _partnerEvents.json file to LZ")
-            with open(partner_events_template_path, 'r') as f:
-                partner_events_content = f.read()
-            partner_events_content = partner_events_content \
-                .replace('${MONGO_DB_NAME}', os.getenv('MONGO_DB_NAME', '')) \
-                .replace('${MONGO_COLLECTION}', collection_name) \
-                .replace('${LZ_URL}', os.getenv('LZ_URL', ''))
-            with open(partner_events_output_path, 'w') as output_file:
-                output_file.write(partner_events_content)
-            push_file_to_lz(partner_events_output_path, collection_name)
 
-        init_table_schema(collection_name)
+        try:
+            init_sync(collection_name)
+        except Exception:
+            logger.exception(
+                "init sync failed for collection %s; skipping change stream listening",
+                collection_name,
+            )
+            continue
 
         Thread(target=listening, args=(collection_name,)).start()
-        # listener_thread = Thread(target=listening, args=(collection_name,))
-        # listener_thread.start()
-        # threads.append(listener_thread)
-
-        # Moved the starting of init_sync to listening so as not to miss any records which may come by the time we start init_sync
-        # Thread(target=init_sync, args=(collection_name,)).start()
-        # init_thread = Thread(target=init_sync, args=(collection_name,))
-        # init_thread.start()
-        # threads.append(init_thread)
 
     # for thread in threads:
     #     thread.join()
@@ -135,17 +124,60 @@ def mirror():
             os._exit(0)
 
 
+# def __get_all_collections() -> list[str]:
+#     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
+#     # check database existence
+#     db_name = os.getenv("MONGO_DB_NAME")
+#     print(f"db_name={db_name}")
+#     try:
+#         all_db_names = client.list_database_names()
+#         if db_name not in all_db_names:
+#             raise ValueError(f"Database name provided do not exists: {db_name}")
+#         db = client[db_name]
+#         return db.list_collection_names()
+#     except ServerSelectionTimeoutError:
+#         raise ValueError("Can not connect to MongoDB with the provided MONGO_CONN_STR.")
+    
+
+# New class:
+def __ensure_partner_events_in_lz(logger: logging.Logger) -> None:
+    """
+    Write _partnerEvents.json once at the landing zone root (mirrored database level).
+    Per Microsoft open mirroring, this file is not per-table and should not include
+    a single collection name.
+    """
+    response_status_code, _ = get_file_from_lz_root(PARTNER_EVENTS_FILE_NAME)
+    if response_status_code == 200:
+        logger.info("_partnerEvents.json already present at landing zone root")
+        return
+
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    partner_events_template_path = os.path.join(app_dir, "_partnerEvents_template.json")
+    partner_events_output_path = os.path.join(app_dir, PARTNER_EVENTS_FILE_NAME)
+    logger.info("writing _partnerEvents.json to landing zone root")
+    with open(partner_events_template_path, "r", encoding="utf-8") as template_file:
+        partner_events_content = template_file.read()
+    partner_events_content = partner_events_content.replace(
+        "${MONGO_DB_NAME}", os.getenv("MONGO_DB_NAME", "")
+    ).replace("${LZ_URL}", os.getenv("LZ_URL", ""))
+    with open(partner_events_output_path, "w", encoding="utf-8") as output_file:
+        output_file.write(partner_events_content)
+    push_file_to_lz_root(partner_events_output_path)
+
+
 def __get_all_collections() -> list[str]:
     client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
     # check database existence
     db_name = os.getenv("MONGO_DB_NAME")
     print(f"db_name={db_name}")
     try:
-        all_db_names = client.list_database_names()
+        all_db_names = [db["name"] for db in client.list_databases(nameOnly=True,authorizedDatabases=True,)]
         if db_name not in all_db_names:
             raise ValueError(f"Database name provided do not exists: {db_name}")
         db = client[db_name]
-        return db.list_collection_names()
+        result = db.command({"listCollections": 1,"nameOnly": True,"authorizedCollections": True,"cursor": {},})
+        collection_names = [doc["name"] for doc in result["cursor"]["firstBatch"]]
+        return collection_names
     except ServerSelectionTimeoutError:
         raise ValueError("Can not connect to MongoDB with the provided MONGO_CONN_STR.")
 

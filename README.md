@@ -9,6 +9,11 @@ Once started, app will continously keep track of the changes in MongoDB Atlas an
 Follow below steps if you want to create manually using Fabric UI (Step 1) and by one click on "Deploy to Azure" below (Step 2) OR you can use the Terraform template provided in the **"terraform"** folder.\
 The Terraform template also provides ability to create a **private connection between the App Service and MongoDB Atlas**.
 
+## Versioning and releases
+
+- **Runtime version** — `VERSION` in the repo root (also `constants.APP_VERSION`). Logged at mirroring startup.
+- **Change log** — See [`RELEASE_NOTES.md`](RELEASE_NOTES.md) for version history and how to create Git tags (e.g. `v1.3.0`).
+
 # Step1: MirrorDB Creation
 To create the MirrorDB, we use the Fabric UI.
 
@@ -75,16 +80,18 @@ Click below to start your App service for MongoDB to Fabric replication:
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fmongodb-partners%2FMongoDB_Fabric_Mirroring%2Fmain%2FARM_template.json)
 
 ## Best Practices and Troubleshooting
-1. Please note the code actually creates two threads for each collection (one for initial_sync and one for delta_sync) and thus if we have large collections (~10 Million+ records), we should be judicous in selecting the compute size of the App service or VM. As a high level bench mark, a compute of 4 CPUs, 16 GiB of memory might work for 5 such collections with a high throughput of say 1000 records/second. Beyond, that we should really monitor the performance and threads and check the CPU usage.
+1. Please note the code runs **initial sync synchronously** per collection, then starts a **listening (change stream) thread**. For large collections (~10 Million+ records), be judicious in selecting the compute size of the App service or VM. As a high level bench mark, a compute of 4 CPUs, 16 GiB of memory might work for 5 such collections with a high throughput of say 1000 records/second. Beyond, that we should really monitor the performance and threads and check the CPU usage.
 2. Azure Storage explorer is your point to start the troubleshooting. Use below files that start with an underscore to get vital information. (They are not copied to OneLake as they start with underscore"_"). Also note these are pickle files and you can view them using command "python -mpickle _maxid.pkl” in terminal.      
-   a. _max_id file: Will tell you what was the maximum _id field that was captured before initial sync begain. Any _id > this _id from _max_id is coming from real time sync. All records with _id <= this _max_id are copied as part of initial_sync   
-   b. _resume_token: Contains the last resume token of the real time change event copied to LZ. Thus, you see this file only if atleast one real time changes parquet file was written in LZ.     
-   c. _initial_sync_status: Indicates initial_sync is complete or not. "Y" in this file will indicate that initial_sync is complete.   
-   d. _metadata.json: Has the primary key which is always "_id". This file should exist in a replicated folder/ table for mirroring to work.   
-   e. _last_id: This is the "_id" value of the last record of the last initial sync batch file written to LZ. This file is deleted when initial sync is completed.   
-   f. _internal_schema: This is one of the very first files written and has the schema as of the records in the collection being replicated.  
-3. The restartability of the App service/ replication is guaranteed if _resume_token file is present. This is because if initial sync is not completed and we restart the App service, the delta changes that came in the interim were being accumulated in a TEMP parquet files in the App service which will be lost. Thus, as a best practice, if the process fails before initial sync is completed, it is advised to delete all files in the collection folder using Azure Storage Explorer and restrart the process so that it can get the new max _id and start initial_sync. Once initial_sync is completed and _resume_token file is created we can restart without any worries as it will pick up changes from the last resume_token from the change stream.
-4. Also, if you are using App service option to host the solution and are observing that App Service is not reflecting the latest code or not starting the code, an observation shared to us by one of the customers was that in App configuration settings - "Always On" needs to be on, and "Session Affinity" needs to be off. Please validate this for yourself and check if it is making the App Service behave nicely :-)
+   a. _max_id file: Will tell you what was the maximum _id field that was captured before initial sync began. All records with `_id <= this _max_id` are copied as part of initial_sync.
+   b. _init_cluster_time: BSON Timestamp **N** captured at init start. Used so the change stream can start at **N+1** until a resume token exists.
+   c. _resume_token: Contains the last resume token of the real time change event copied to LZ. Thus, you see this file only if atleast one real time changes parquet file was written in LZ.     
+   d. _initial_sync_status: Indicates initial_sync is complete or not. "Y" in this file will indicate that initial_sync is complete.   
+   e. _metadata.json: Has the primary key which is always "_id". This file should exist in a replicated folder/ table for mirroring to work.   
+   f. _last_id: This is the "_id" value of the last record of the last initial sync batch file written to LZ. This file is deleted when initial sync is completed.   
+   g. _internal_schema: This is one of the very first files written and has the schema as of the records in the collection being replicated.  
+3. Internal schema is inferred from a random [`$sample`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/sample/) of the collection. By default the sample size is **below 5%** of `estimated_document_count` (4.9% in code). Set `SCHEMA_BOOTSTRAP_SAMPLE_SIZE` in `.env` to an explicit document count if you need a smaller or larger cap (still clamped to the collection size). For very large collections, prefer a bounded override to limit startup read cost.
+4. Restartability: after init completes, listening uses `_resume_token` when present; otherwise it uses `_init_cluster_time` (**startAtOperationTime = N+1**) so changes after the captured cluster time are not missed when the listening thread starts. If init sync fails mid-way, the same frozen N and `_last_id` / `_max_id` are reused on resume. If the process fails before init completes and you need a clean re-baseline, delete the collection folder in the landing zone (including `_init_cluster_time`) and restart.
+5. Also, if you are using App service option to host the solution and are observing that App Service is not reflecting the latest code or not starting the code, an observation shared to us by one of the customers was that in App configuration settings - "Always On" needs to be on, and "Session Affinity" needs to be off. Please validate this for yourself and check if it is making the App Service behave nicely :-)
 
 ## Known Limitations
 1. This solution is based on MongoDB Atlas changestreams to capture the real time changes and sync them to Fabric OneLake. And because [changestreams are not yet supported for Timeseries collections](https://www.mongodb.com/docs/manual/core/timeseries/timeseries-limitations/), the current solution will not work for **Timeseries collections**.

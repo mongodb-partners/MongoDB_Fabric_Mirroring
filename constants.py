@@ -1,6 +1,19 @@
+from pathlib import Path
+
 import bson
 import pandas as pd
 
+
+def _read_app_version() -> str:
+    """Single-line semantic version from repo root VERSION file."""
+    try:
+        text = (Path(__file__).resolve().parent / "VERSION").read_text(encoding="utf-8")
+        return (text.strip() or "0.0.0").splitlines()[0].strip()
+    except OSError:
+        return "0.0.0"
+
+
+APP_VERSION = _read_app_version()
 
 TYPES_TO_CONVERT_TO_STR = [
     bson.objectid.ObjectId,
@@ -14,6 +27,13 @@ DATA_FILES_PATH = "data_files"
 FILE_NAME_LENGTH = 20
 
 MONGODB_READING_BATCH_SIZE = 100000
+
+# Default schema bootstrap sample = floor(estimated_count * SCHEMA_BOOTSTRAP_MAX_FRACTION),
+# capped below 5% of the collection so $sample can use the efficient pseudo-random path when possible.
+# See https://www.mongodb.com/docs/manual/reference/operator/aggregation/sample/
+SCHEMA_BOOTSTRAP_MAX_FRACTION = 0.049
+# $sample retries before falling back to find().sort(_id).limit(N)
+SCHEMA_BOOTSTRAP_SAMPLE_MAX_ATTEMPTS = 4
 
 METADATA_FILE_NAME = "_metadata.json"
 
@@ -46,6 +66,9 @@ LAST_PARQUET_FILE_NUMBER = "_last_created_parquet.pkl"
 INIT_SYNC_LAST_ID_FILE_NAME = "_last_id.pkl"
 
 INIT_SYNC_MAX_ID_FILE_NAME = "_max_id.pkl"
+
+# Cluster time N captured at init start; change stream resumes at N+1 when no resume token.
+INIT_SYNC_CLUSTER_TIME_FILE_NAME = "_init_cluster_time.pkl"
 
 DELTA_SYNC_CACHE_PARQUET_FILE_NAME = "_incremental_change_cache.parquet"
 

@@ -4,10 +4,11 @@ import time
 import logging
 import os
 import pickle
-from threading import Thread
-import threading
+import logging
 from pymongo.errors import PyMongoError
 from datetime import datetime, timedelta
+
+from bson.timestamp import Timestamp
 
 from constants import (
     ROW_MARKER_COLUMN_NAME,
@@ -20,6 +21,7 @@ from constants import (
     DELTA_SYNC_RESUME_TOKEN_FILE_NAME,
 # added the two new files to save the initial sync status and last parquet file number
     INIT_SYNC_STATUS_FILE_NAME,
+    INIT_SYNC_CLUSTER_TIME_FILE_NAME,
     LAST_PARQUET_FILE_NUMBER,
     DTYPE_KEY,
     TYPE_KEY,
@@ -27,10 +29,11 @@ from constants import (
 from utils import to_string, get_parquet_full_path_filename, get_temp_parquet_full_path_filename, get_table_dir
 from push_file_to_lz import push_file_to_lz
 #from flags import get_init_flag
-from init_sync import init_sync
 import schemas
 import schema_utils
 from file_utils import FileType, read_from_file, write_to_file
+from mongo_cluster_time import next_timestamp
+
 
 def listening(collection_name: str):
     logger = logging.getLogger(f"{__name__}[{collection_name}]")
@@ -48,6 +51,17 @@ def listening(collection_name: str):
     if resume_token:
         logger.info(
             f"interrupted incremental sync detected, continuing with resume_token={resume_token}"
+        )
+
+    init_cluster_time = read_from_file(
+        collection_name, INIT_SYNC_CLUSTER_TIME_FILE_NAME, FileType.PICKLE
+    )
+    if not isinstance(init_cluster_time, Timestamp):
+        init_cluster_time = None
+    else:
+        logger.info(
+            "loaded init cluster time N=%s for change stream handoff",
+            init_cluster_time,
         )
 
     #MongoDB connection and data info
@@ -69,26 +83,36 @@ def listening(collection_name: str):
     init_sync_stat_flag = None
     last_sync_time: float | None = None
 
-    # start init sync after we get cursor from Change Stream
-    Thread(target=init_sync, args=(collection_name,)).start()
     logger.info(f"start listening to change stream for collection {collection_name}")
     
     # New main loop logic
     while True:
-        # Build watch options each time we open a new stream
+        # Build watch options each time we open a new stream.
+        # Prefer resume_after when available; otherwise start at N+1 from init cluster time.
         watch_kwargs = dict(
             full_document="updateLookup",
             max_await_time_ms=20000,
         )
+        start_at_operation_time = None
         if resume_token:
             watch_kwargs["resume_after"] = resume_token
+        elif init_cluster_time is not None:
+            start_at_operation_time = next_timestamp(init_cluster_time)
+            watch_kwargs["start_at_operation_time"] = start_at_operation_time
+        else:
+            logger.warning(
+                "no resume token or init cluster time for %s; "
+                "opening change stream from latest (possible data gap)",
+                collection_name,
+            )
 
         try:
             with collection.watch(**watch_kwargs) as stream:
                 logger.info(
-                    "opened change stream for %s with resume_token=%s",
+                    "opened change stream for %s with resume_token=%s start_at_operation_time=%s",
                     collection_name,
                     resume_token,
+                    start_at_operation_time,
                 )
                 last_action_time = datetime.now()
                 # Use try_next so we can flush on time threshold even without new events
@@ -170,8 +194,8 @@ def listening(collection_name: str):
                         accumulative_df = pd.concat(
                             [accumulative_df, df], ignore_index=True
                         )
-                        logger.info("concat accumulative_df result:")
-                        logger.info(accumulative_df)
+                        logger.debug("concat accumulative_df result:")
+                        logger.debug(accumulative_df)
                     else:
                         logger.info("df created")
                         accumulative_df = df
@@ -196,7 +220,7 @@ def listening(collection_name: str):
             pymongo.errors.ConnectionFailure,
             pymongo.errors.CursorNotFound,
             pymongo.errors.OperationFailure,
-            pymongo.Error,
+            PyMongoError,
         ) as exc:
             # Detect non-resumable ChangeStreamHistoryLost / stale resume token.
             is_non_resumable = (
@@ -208,13 +232,23 @@ def listening(collection_name: str):
             )
 
             if is_non_resumable:
-                logger.error(
-                    "Non-resumable Change Stream error (ChangeStreamHistoryLost) for collection %s: %s. "
-                    "Clearing resume token and restarting from latest position.",
-                    collection_name,
-                    exc,
-                    exc_info=True,
-                )
+                if init_cluster_time is not None:
+                    logger.error(
+                        "Non-resumable Change Stream error (ChangeStreamHistoryLost) for collection %s: %s. "
+                        "Clearing resume token; will reopen with startAtOperationTime=N+1 "
+                        "(history may still be too old — gap possible).",
+                        collection_name,
+                        exc,
+                        exc_info=True,
+                    )
+                else:
+                    logger.error(
+                        "Non-resumable Change Stream error (ChangeStreamHistoryLost) for collection %s: %s. "
+                        "Clearing resume token and restarting from latest position.",
+                        collection_name,
+                        exc,
+                        exc_info=True,
+                    )
 
                 # Drop the bad resume token so the next loop does *not* send resume_after.
                 resume_token = None
@@ -270,6 +304,9 @@ def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_fla
                 collection_name, prefix=prefix
             )
             logger.info(f"writing TEMP parquet file: {parquet_full_path_filename}")
+            schema_utils.finalize_dataframe_for_parquet(
+                collection_name, accumulative_df
+            )
             accumulative_df.to_parquet(parquet_full_path_filename)
             accumulative_df = None
     else:        
@@ -289,13 +326,9 @@ def process_accumulative_df(accumulative_df, collection_name, init_sync_stat_fla
                 parquet_full_path_filename = get_parquet_full_path_filename(collection_name, last_parquet_file_num)
 
                 logger.info(f"writing parquet file: {parquet_full_path_filename}")
-                # Convert any remaining Object column into String
-                id_col = accumulative_df['_id']
-                obj_cols = accumulative_df.select_dtypes(include=['object']).columns
-                accumulative_df[obj_cols] = accumulative_df[obj_cols].astype(str,errors="ignore")
-                
-                #  Restore the _id column
-                accumulative_df['_id'] = id_col
+                schema_utils.finalize_dataframe_for_parquet(
+                    collection_name, accumulative_df
+                )
                 # Write the parquet file
                 accumulative_df.to_parquet(parquet_full_path_filename)
                 accumulative_df = None

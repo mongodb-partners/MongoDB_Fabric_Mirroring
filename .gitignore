@@ -1,4 +1,5 @@
 __pycache__/
+.pytest_cache/
 .venv/
 .env
 venv
@@ -16,3 +17,6 @@ data_files/
 *.tfstate
 *.tfstate.*
 *.lock.*
+_partnerEvents.json
+troubleshooting
+troubleshooting/*
