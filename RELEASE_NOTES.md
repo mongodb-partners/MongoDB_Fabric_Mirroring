@@ -32,6 +32,14 @@ Adjust branch name as needed. Existing lightweight tags in this repo include `v1
 
 ---
 
+## [1.4.4] — 2026-07-29
+
+### Fixed
+
+- **`mongodb_generic_mirroring.py`**: replace interactive `input()` keep-alive with `Event().wait()` so the mirror thread no longer raises `EOFError` on App Service / non-interactive hosts (e.g. Python 3.12).
+
+---
+
 ## [1.4.3] — 2026-07-14
 
 ### Changed
