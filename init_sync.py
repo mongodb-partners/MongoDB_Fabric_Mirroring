@@ -217,8 +217,11 @@ def init_sync(collection_name: str):
                 LAST_PARQUET_FILE_NUMBER,
                 FileType.PICKLE,
             )
-            #>>># added sleep to ensure that Fabric picks up one file at a time - 14Mar2025
-            time.sleep(30)
+            # Fix 7: make inter-batch sleep configurable (default 5s, was hardcoded 30s)
+            init_sync_sleep_sec = int(os.getenv("INIT_SYNC_BATCH_SLEEP_SEC", "5"))
+            if init_sync_sleep_sec > 0:
+                logger.debug(f"sleeping {init_sync_sleep_sec}s between init sync batches")
+                time.sleep(init_sync_sleep_sec)
 
     # delete last_id file, as init sync is complete
     logger.info("removing the last_id file")

@@ -1,4 +1,5 @@
 import os
+import time
 from dotenv import load_dotenv
 import requests
 import json
@@ -8,6 +9,15 @@ import utils
 import constants
 
 logger = logging.getLogger(__name__)
+
+# Fix 3: HTTP timeout constants (connect_timeout, read_timeout) in seconds
+HTTP_CONNECT_TIMEOUT = int(os.getenv("HTTP_CONNECT_TIMEOUT_SEC", "10"))
+HTTP_READ_TIMEOUT = int(os.getenv("HTTP_READ_TIMEOUT_SEC", "60"))
+HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
+
+# Fix 1: Retry constants
+MAX_UPLOAD_RETRIES = int(os.getenv("MAX_UPLOAD_RETRIES", "3"))
+UPLOAD_RETRY_BASE_DELAY_SEC = float(os.getenv("UPLOAD_RETRY_BASE_DELAY_SEC", "2"))
 
 
 def _lz_folder_url(lz_url: str, table_name: str = "") -> str:
@@ -30,7 +40,8 @@ def push_file_to_lz(
             access_token = __get_access_token(
                 os.getenv("APP_ID"), os.getenv("SECRET"), os.getenv("TENANT_ID")
             )
-            __patch_file(access_token, filepath, os.getenv("LZ_URL"), table_name)
+            # Fix 1: retry with exponential backoff
+            __patch_file_with_retry(access_token, filepath, os.getenv("LZ_URL"), table_name)
         # identify if any other parquet files in the dir, and remove them, leaving only the last one we just pushed
         __clean_up_old_parquet_files(filepath)
     except Exception as e:
@@ -76,11 +87,9 @@ def __get_access_token(app_id, client_secret, directory_id):
         "scope": "https://storage.azure.com/.default",
     }
     token_headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    # logger.debug(token_url)
-    token_response = requests.post(token_url, data=token_data, headers=token_headers)
+    # Fix 3: add timeout
+    token_response = requests.post(token_url, data=token_data, headers=token_headers, timeout=HTTP_TIMEOUT)
     token_response_dict = json.loads(token_response.text)
-
-    # logger.debug(token_response.text)
 
     token = token_response_dict.get("access_token")
 
@@ -89,28 +98,71 @@ def __get_access_token(app_id, client_secret, directory_id):
         logger.debug(str(token_response_dict))
         raise Exception("Error in getting in access token")
     else:
-        #   logger.debug("Token is:" + token)
         return token
 
 
-def __patch_file(access_token, file_path, lz_url, table_name):
+def __patch_file_with_retry(access_token, file_path, lz_url, table_name):
+    """Fix 1: Retry wrapper around __patch_file with exponential backoff."""
+    last_exception = None
+    for attempt in range(1, MAX_UPLOAD_RETRIES + 1):
+        try:
+            __patch_file(access_token, file_path, lz_url, table_name)
+            return  # success
+        except Exception as e:
+            last_exception = e
+            delay = UPLOAD_RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1))
+            logger.warning(
+                "Upload attempt %d/%d failed for %s: %s. Retrying in %.1fs...",
+                attempt, MAX_UPLOAD_RETRIES, file_path, e, delay,
+            )
+            if attempt < MAX_UPLOAD_RETRIES:
+                time.sleep(delay)
+    logger.error(
+        "All %d upload attempts failed for %s: %s",
+        MAX_UPLOAD_RETRIES, file_path, last_exception,
+    )
+    raise last_exception
+
+
+def __delete_temp_file(access_token, base_url, file_name_temp):
+    """Fix 2: Best-effort cleanup of orphaned *_TEMP file in OneLake."""
     try:
-        file_name = os.path.basename(file_path)
-        file_name_temp = file_name
-        base_url = _lz_folder_url(lz_url, table_name)
-        if not file_name.startswith('_'):
-            file_name_temp = '_' + file_name
+        temp_url = base_url + file_name_temp + '_TEMP'
+        headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
+        response = requests.delete(temp_url, headers=headers, timeout=HTTP_TIMEOUT)
+        if response.status_code in (200, 204):
+            logger.info("Cleaned up orphaned TEMP file: %s", file_name_temp + '_TEMP')
         else:
-            file_name_temp = file_name
-            
+            logger.warning(
+                "Failed to clean up TEMP file %s_TEMP (status %d)",
+                file_name_temp, response.status_code,
+            )
+    except Exception as cleanup_err:
+        logger.warning("Error during TEMP file cleanup: %s", cleanup_err)
+
+
+def __patch_file(access_token, file_path, lz_url, table_name):
+    file_name = os.path.basename(file_path)
+    file_name_temp = file_name
+    base_url = _lz_folder_url(lz_url, table_name)
+    if not file_name.startswith('_'):
+        file_name_temp = '_' + file_name
+    else:
+        file_name_temp = file_name
+
+    temp_created = False
+    try:
         token_url_temp = base_url + file_name_temp + '_TEMP' + "?resource=file"
         token_url = base_url + file_name
 
         token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
         logger.debug("creating file in lake")
 
-        # Code to create file in lakehouse
-        response = requests.put(token_url_temp, data={}, headers=token_headers)
+        # Step 1: Create temp file in lakehouse
+        # Fix 3: add timeout
+        response = requests.put(token_url_temp, data={}, headers=token_headers, timeout=HTTP_TIMEOUT)
+        response.raise_for_status()
+        temp_created = True
         logger.debug(response)
 
         token_url_temp = base_url + file_name_temp + '_TEMP' + "?position=0&action=append&flush=true"
@@ -118,26 +170,34 @@ def __patch_file(access_token, file_path, lz_url, table_name):
             "Authorization": "Bearer " + access_token,
             "x-ms-file-name": file_name,
         }
-            
-        logger.debug(token_url_temp)    
+
+        logger.debug(token_url_temp)
         logger.debug("pushing data to file in lake")
 
-        # Code to push Data to Lakehouse
+        # Step 2: Append data to temp file
+        # Fix 3: add timeout
         with open(file_path, "rb") as file:
             file_contents = file.read()
-            response = requests.patch(token_url_temp, data=file_contents, headers=token_headers)
+            response = requests.patch(token_url_temp, data=file_contents, headers=token_headers, timeout=HTTP_TIMEOUT)
+        response.raise_for_status()
         logger.debug(response)
 
-        # Rename file from temp to actual name
+        # Step 3: Rename temp to final name
         token_headers = {
             "Authorization": "Bearer " + access_token,
             "x-ms-rename-source": base_url + file_name_temp + '_TEMP' + "?resource=file",
             "x-ms-version": "2020-06-12"
         }
-        response = requests.put(token_url, headers=token_headers)
+        # Fix 3: add timeout
+        response = requests.put(token_url, headers=token_headers, timeout=HTTP_TIMEOUT)
+        response.raise_for_status()
+        temp_created = False  # rename succeeded, no orphan to clean
         logger.debug(response)
     except Exception as e:
         logger.error(f"Error patching file to landing zone: {str(e)}")
+        # Fix 2: clean up orphaned TEMP file
+        if temp_created:
+            __delete_temp_file(access_token, base_url, file_name_temp)
         raise
 
 
@@ -150,7 +210,8 @@ def get_file_from_lz(table_name, file_name):
     )
     token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
     url = _lz_folder_url(os.getenv("LZ_URL"), table_name) + file_name
-    response = requests.get(url, headers=token_headers)
+    # Fix 3: add timeout
+    response = requests.get(url, headers=token_headers, timeout=HTTP_TIMEOUT)
     response_status_code = response.status_code
     if response_status_code != 200:
         logger.warning(
@@ -158,10 +219,6 @@ def get_file_from_lz(table_name, file_name):
         )
         return None, None
     local_file_path = os.path.join(utils.get_table_dir(table_name), file_name)
-    # Commented out to stop re-write
-    # with open(local_file_path, "wb") as local_file:
-    #     for chunk in response.iter_content():
-    #         local_file.write(chunk)
     return (response_status_code, response)
 
 
@@ -184,6 +241,7 @@ def delete_file_from_lz(table_name, file_name):
     )
     token_headers = {"Authorization": "Bearer " + access_token, "content-length": "0"}
     url = _lz_folder_url(os.getenv("LZ_URL"), table_name) + file_name
-    response = requests.delete(url, headers=token_headers)
+    # Fix 3: add timeout
+    response = requests.delete(url, headers=token_headers, timeout=HTTP_TIMEOUT)
     logger.debug(f"delete response: {response}")
     return response.status_code if response.status_code == 200 else None

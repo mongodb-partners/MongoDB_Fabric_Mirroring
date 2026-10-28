@@ -1,0 +1,7 @@
+# Test dependencies
+pytest==8.3.5
+pytest-mock==3.14.0
+responses==0.25.7
+mongomock==4.3.0
+faker==37.3.0
+psutil==7.0.0

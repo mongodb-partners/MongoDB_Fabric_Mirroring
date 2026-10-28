@@ -105,14 +105,32 @@ def mirror():
                 collection_name,
             )
 
-        try:
-            init_sync(collection_name)
-        except Exception:
-            logger.exception(
-                "init sync failed for collection %s; skipping change stream listening",
-                collection_name,
+        # Fix 6: retry init_sync with backoff; start listener even if init_sync fails
+        init_sync_succeeded = False
+        max_init_retries = int(os.getenv("MAX_INIT_SYNC_RETRIES", "3"))
+        for init_attempt in range(1, max_init_retries + 1):
+            try:
+                init_sync(collection_name)
+                init_sync_succeeded = True
+                break
+            except Exception:
+                logger.exception(
+                    "init sync attempt %d/%d failed for collection %s",
+                    init_attempt, max_init_retries, collection_name,
+                )
+                if init_attempt < max_init_retries:
+                    retry_delay = 5 * init_attempt
+                    logger.info("Retrying init sync for %s in %d seconds...", collection_name, retry_delay)
+                    import time
+                    time.sleep(retry_delay)
+
+        if not init_sync_succeeded:
+            logger.error(
+                "All %d init sync attempts failed for collection %s. "
+                "Starting change stream listener anyway — it will use "
+                "start_at_operation_time from init_cluster_time if available.",
+                max_init_retries, collection_name,
             )
-            continue
 
         Thread(target=listening, args=(collection_name,)).start()
 

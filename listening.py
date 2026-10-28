@@ -85,6 +85,10 @@ def listening(collection_name: str):
 
     logger.info(f"start listening to change stream for collection {collection_name}")
     
+    # Fix 4: circuit breaker for consecutive ChangeStreamHistoryLost events
+    consecutive_history_loss_count = 0
+    MAX_CONSECUTIVE_HISTORY_LOSS = int(os.getenv("MAX_CONSECUTIVE_HISTORY_LOSS", "3"))
+
     # New main loop logic
     while True:
         # Build watch options each time we open a new stream.
@@ -232,40 +236,68 @@ def listening(collection_name: str):
             )
 
             if is_non_resumable:
+                consecutive_history_loss_count += 1
                 if init_cluster_time is not None:
                     logger.error(
                         "Non-resumable Change Stream error (ChangeStreamHistoryLost) for collection %s: %s. "
                         "Clearing resume token; will reopen with startAtOperationTime=N+1 "
-                        "(history may still be too old — gap possible).",
+                        "(history may still be too old — gap possible). "
+                        "Consecutive history-loss count: %d/%d",
                         collection_name,
                         exc,
+                        consecutive_history_loss_count,
+                        MAX_CONSECUTIVE_HISTORY_LOSS,
                         exc_info=True,
                     )
                 else:
                     logger.error(
                         "Non-resumable Change Stream error (ChangeStreamHistoryLost) for collection %s: %s. "
-                        "Clearing resume token and restarting from latest position.",
+                        "Clearing resume token and restarting from latest position. "
+                        "Consecutive history-loss count: %d/%d",
                         collection_name,
                         exc,
+                        consecutive_history_loss_count,
+                        MAX_CONSECUTIVE_HISTORY_LOSS,
                         exc_info=True,
                     )
+
+                # Fix 4: circuit breaker — stop retrying after too many consecutive failures
+                if consecutive_history_loss_count >= MAX_CONSECUTIVE_HISTORY_LOSS:
+                    logger.critical(
+                        "Collection %s has hit %d consecutive ChangeStreamHistoryLost events. "
+                        "The oplog history has expired and the collection cannot resume from "
+                        "the last known position. Manual re-initialization is required. "
+                        "Stopping change stream listener for this collection.",
+                        collection_name,
+                        consecutive_history_loss_count,
+                    )
+                    # Write a sentinel file so operators can detect this state
+                    try:
+                        write_to_file(
+                            "NEEDS_REINIT",
+                            collection_name,
+                            "_NEEDS_REINIT.txt",
+                            FileType.TEXT,
+                        )
+                    except Exception:
+                        logger.exception("Failed to write _NEEDS_REINIT sentinel file")
+                    return  # Exit the listening thread instead of looping forever
 
                 # Drop the bad resume token so the next loop does *not* send resume_after.
                 resume_token = None
 
-                # Persist that change so a restart doesn't reuse the stale token.
-                write_to_file(
-                    None,
-                    collection_name,
-                    DELTA_SYNC_RESUME_TOKEN_FILE_NAME,
-                    FileType.PICKLE,
-                )
+                # Fix 5: do NOT persist None to LZ — keep the last known good token file
+                # intact so a process restart can still use it.  Only the in-memory copy
+                # is cleared; the LZ file is left as-is.
+                # (The previous code wrote None here, which destroyed the resume point.)
 
-                # Optional: clear any in-memory batch since we've lost continuity anyway.
+                # Clear any in-memory batch since we've lost continuity anyway.
                 accumulative_df = None
                 last_sync_time = None
             else:
                 # Resumable errors: keep the last known resume_token.
+                # Fix 4: reset the circuit breaker on any resumable error
+                consecutive_history_loss_count = 0
                 logger.warning(
                     "Resumable change stream error for collection %s: %s; "
                     "will reopen with last resume_token=%s",
