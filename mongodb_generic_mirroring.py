@@ -2,10 +2,12 @@ import logging.handlers
 import os
 import logging
 from threading import Event, Thread
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pymongo
 from pymongo.errors import ServerSelectionTimeoutError
 from dotenv import load_dotenv
 import json
+import time
 
 from init_sync import init_sync
 from listening import listening
@@ -17,6 +19,66 @@ from constants import (
 )
 from push_file_to_lz import push_file_to_lz, get_file_from_lz_root, push_file_to_lz_root
 from file_utils import FileType, read_from_file
+
+def _process_single_collection(collection_name: str, logger: logging.Logger):
+    """
+    Process a single collection end-to-end:
+    metadata → schema bootstrap → init_sync (with retries) → start listener.
+    This runs inside a ThreadPoolExecutor worker so one stuck collection
+    does not block others.
+    """
+    coll_logger = logging.getLogger(f"pipeline[{collection_name}]")
+
+    #>>># changes to write metadata.json a the first file - 6Mar2025
+    metadata_file_exists = read_from_file(
+        collection_name, METADATA_FILE_NAME, FileType.TEXT
+    )
+    if not metadata_file_exists:
+        metadata_json_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), METADATA_FILE_NAME
+            )
+        coll_logger.info("writing metadata file to LZ")
+        push_file_to_lz(metadata_json_path, collection_name)
+
+    try:
+        init_table_schema(collection_name)
+    except Exception:
+        coll_logger.exception(
+            "schema bootstrap failed for collection %s; continuing with init sync",
+            collection_name,
+        )
+
+    # Fix 6: retry init_sync with backoff; start listener even if init_sync fails
+    init_sync_succeeded = False
+    max_init_retries = int(os.getenv("MAX_INIT_SYNC_RETRIES", "3"))
+    for init_attempt in range(1, max_init_retries + 1):
+        try:
+            init_sync(collection_name)
+            init_sync_succeeded = True
+            break
+        except Exception:
+            coll_logger.exception(
+                "init sync attempt %d/%d failed for collection %s",
+                init_attempt, max_init_retries, collection_name,
+            )
+            if init_attempt < max_init_retries:
+                retry_delay = 5 * init_attempt
+                coll_logger.info(
+                    "Retrying init sync for %s in %d seconds...",
+                    collection_name, retry_delay,
+                )
+                time.sleep(retry_delay)
+
+    if not init_sync_succeeded:
+        coll_logger.error(
+            "All %d init sync attempts failed for collection %s. "
+            "Starting change stream listener anyway — it will use "
+            "start_at_operation_time from init_cluster_time if available.",
+            max_init_retries, collection_name,
+        )
+
+    Thread(target=listening, args=(collection_name,), daemon=True).start()
+
 
 def mirror():
     load_dotenv()
@@ -85,54 +147,28 @@ def mirror():
 
     __ensure_partner_events_in_lz(logger)
 
-    for collection_name in collection_list:
-    #>>># changes to write metadata.json a the first file - 6Mar2025
-        metadata_file_exists = read_from_file(
-            collection_name, METADATA_FILE_NAME, FileType.TEXT
-        )
-        if not metadata_file_exists: 
-            metadata_json_path = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)), METADATA_FILE_NAME
-                )
-            logger.info("writing metadata file to LZ")
-            push_file_to_lz(metadata_json_path, collection_name)
+    # Fix C: process collections in parallel so one stuck collection
+    # doesn't block all others.  Each worker thread handles the full
+    # pipeline for one collection: metadata → schema → init_sync → listener.
+    max_workers = int(os.getenv("MAX_PARALLEL_COLLECTIONS", "5"))
 
-        try:
-            init_table_schema(collection_name)
-        except Exception:
-            logger.exception(
-                "schema bootstrap failed for collection %s; continuing with init sync",
-                collection_name,
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for collection_name in collection_list:
+            future = executor.submit(
+                _process_single_collection, collection_name, logger
             )
+            futures[future] = collection_name
 
-        # Fix 6: retry init_sync with backoff; start listener even if init_sync fails
-        init_sync_succeeded = False
-        max_init_retries = int(os.getenv("MAX_INIT_SYNC_RETRIES", "3"))
-        for init_attempt in range(1, max_init_retries + 1):
+        # Wait for all init_syncs to complete (listeners run as daemons)
+        for future in as_completed(futures):
+            coll = futures[future]
             try:
-                init_sync(collection_name)
-                init_sync_succeeded = True
-                break
+                future.result()
             except Exception:
                 logger.exception(
-                    "init sync attempt %d/%d failed for collection %s",
-                    init_attempt, max_init_retries, collection_name,
+                    "Collection %s failed during processing pipeline", coll
                 )
-                if init_attempt < max_init_retries:
-                    retry_delay = 5 * init_attempt
-                    logger.info("Retrying init sync for %s in %d seconds...", collection_name, retry_delay)
-                    import time
-                    time.sleep(retry_delay)
-
-        if not init_sync_succeeded:
-            logger.error(
-                "All %d init sync attempts failed for collection %s. "
-                "Starting change stream listener anyway — it will use "
-                "start_at_operation_time from init_cluster_time if available.",
-                max_init_retries, collection_name,
-            )
-
-        Thread(target=listening, args=(collection_name,)).start()
 
     # Keep the mirror thread alive for App Service / non-interactive hosts.
     # Do not use input(): stdin is closed there and raises EOFError.
