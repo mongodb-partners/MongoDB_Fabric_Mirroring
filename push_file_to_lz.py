@@ -19,6 +19,9 @@ HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
 MAX_UPLOAD_RETRIES = int(os.getenv("MAX_UPLOAD_RETRIES", "3"))
 UPLOAD_RETRY_BASE_DELAY_SEC = float(os.getenv("UPLOAD_RETRY_BASE_DELAY_SEC", "2"))
 
+# Fix B: Token cache — avoid acquiring a new token for every LZ call
+_token_cache = {"token": None, "expires_at": 0.0}
+
 
 def _lz_folder_url(lz_url: str, table_name: str = "") -> str:
     """Landing zone folder URL; empty table_name = mirrored database root (LandingZone/)."""
@@ -73,10 +76,12 @@ def __clean_up_old_parquet_files(filepath: str):
 
 
 def __get_access_token(app_id, client_secret, directory_id):
-    """It will create a access token to access the mail apis"""
-    app_id = app_id  # Application Id - on the azure app overview page
-    client_secret = client_secret
-    directory_id = directory_id
+    """Get a cached access token, refreshing only when expired or missing."""
+    now = time.time()
+    # Return cached token if it's still valid (with 60s safety margin)
+    if _token_cache["token"] and _token_cache["expires_at"] > now + 60:
+        return _token_cache["token"]
+
     token_url = (
         "https://login.microsoftonline.com/" + directory_id + "/oauth2/v2.0/token"
     )
@@ -87,17 +92,20 @@ def __get_access_token(app_id, client_secret, directory_id):
         "scope": "https://storage.azure.com/.default",
     }
     token_headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    # Fix 3: add timeout
     token_response = requests.post(token_url, data=token_data, headers=token_headers, timeout=HTTP_TIMEOUT)
     token_response_dict = json.loads(token_response.text)
 
     token = token_response_dict.get("access_token")
+    expires_in = token_response_dict.get("expires_in", 3600)
 
     if token == None:
         logger.debug("Unable to get access token")
         logger.debug(str(token_response_dict))
         raise Exception("Error in getting in access token")
     else:
+        _token_cache["token"] = token
+        _token_cache["expires_at"] = now + int(expires_in)
+        logger.debug("Acquired new access token, expires in %ss", expires_in)
         return token
 
 

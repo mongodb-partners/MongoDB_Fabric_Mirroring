@@ -275,6 +275,11 @@ class TestPushFileToLz:
         """Full push flow: token → create → append → rename."""
         _add_token_response(resp_lib)
 
+        # Clear the token cache so this test gets a fresh token
+        import push_file_to_lz as pfl
+        pfl._token_cache["token"] = None
+        pfl._token_cache["expires_at"] = 0.0
+
         test_file = tmp_path / "data.parquet"
         test_file.write_bytes(b"PAR1" + b"\x00" * 100)
 
@@ -285,12 +290,18 @@ class TestPushFileToLz:
 
         push_file_to_lz(str(test_file), "testcoll")
 
+        # 1 token + 3 OneLake = 4 calls
         assert len(resp_lib.calls) == 4
 
     @resp_lib.activate
     def test_push_with_retry_and_cleanup(self, env_vars, tmp_path):
         """Push that fails once, retries, and succeeds."""
         _add_token_response(resp_lib)
+
+        # Clear the token cache so this test gets a fresh token
+        import push_file_to_lz as pfl
+        pfl._token_cache["token"] = None
+        pfl._token_cache["expires_at"] = 0.0
 
         test_file = tmp_path / "data.parquet"
         test_file.write_bytes(b"PAR1" + b"\x00" * 100)
@@ -314,7 +325,4 @@ class TestPushFileToLz:
         push_file_to_lz(str(test_file), "testcoll")
 
         # 1 token + 3 (first attempt: create+append-fail+cleanup) + 3 (retry: create+append+rename) = 7
-        # But the first attempt has: create(1) + append-fail(1) + cleanup(1) = 3
-        # Retry has: create(1) + append(1) + rename(1) = 3
-        # Plus token(1) = 7 total
         assert len(resp_lib.calls) == 7

@@ -663,7 +663,16 @@ def init_table_schema(table_name: str):
     else:
         # else, init schema from collection
         try:
-            client = pymongo.MongoClient(os.getenv("MONGO_CONN_STR"))
+            # Fix A: add socket/server timeouts so $sample doesn't hang forever
+            mongo_socket_timeout_ms = int(os.getenv("MONGO_SOCKET_TIMEOUT_MS", "120000"))
+            mongo_connect_timeout_ms = int(os.getenv("MONGO_CONNECT_TIMEOUT_MS", "20000"))
+            mongo_server_select_timeout_ms = int(os.getenv("MONGO_SERVER_SELECT_TIMEOUT_MS", "30000"))
+            client = pymongo.MongoClient(
+                os.getenv("MONGO_CONN_STR"),
+                socketTimeoutMS=mongo_socket_timeout_ms,
+                connectTimeoutMS=mongo_connect_timeout_ms,
+                serverSelectionTimeoutMS=mongo_server_select_timeout_ms,
+            )
             db = client[os.getenv("MONGO_DB_NAME")]
             collection = db[table_name]
             estimated_count = collection.estimated_document_count()
