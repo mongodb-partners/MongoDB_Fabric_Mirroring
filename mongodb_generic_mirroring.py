@@ -29,16 +29,46 @@ def _process_single_collection(collection_name: str, logger: logging.Logger):
     """
     coll_logger = logging.getLogger(f"pipeline[{collection_name}]")
 
-    #>>># changes to write metadata.json a the first file - 6Mar2025
-    metadata_file_exists = read_from_file(
-        collection_name, METADATA_FILE_NAME, FileType.TEXT
-    )
-    if not metadata_file_exists:
-        metadata_json_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), METADATA_FILE_NAME
+    # Step 1: Ensure _metadata.json exists in LZ — this is REQUIRED by Fabric.
+    # Without it, Fabric cannot parse the table folder and throws
+    # "PathNotFound ... _metadata.json" during mirroring.
+    metadata_uploaded = False
+    metadata_retries = int(os.getenv("MAX_METADATA_RETRIES", "3"))
+    for attempt in range(1, metadata_retries + 1):
+        try:
+            metadata_file_exists = read_from_file(
+                collection_name, METADATA_FILE_NAME, FileType.TEXT
             )
-        coll_logger.info("writing metadata file to LZ")
-        push_file_to_lz(metadata_json_path, collection_name)
+            if metadata_file_exists:
+                metadata_uploaded = True
+                break
+
+            metadata_json_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), METADATA_FILE_NAME
+                )
+            coll_logger.info(
+                "writing metadata file to LZ (attempt %d/%d)",
+                attempt, metadata_retries,
+            )
+            push_file_to_lz(metadata_json_path, collection_name)
+            metadata_uploaded = True
+            break
+        except Exception:
+            coll_logger.exception(
+                "metadata upload attempt %d/%d failed for %s",
+                attempt, metadata_retries, collection_name,
+            )
+            if attempt < metadata_retries:
+                time.sleep(3 * attempt)
+
+    if not metadata_uploaded:
+        coll_logger.error(
+            "Failed to upload _metadata.json for %s after %d attempts. "
+            "Fabric cannot mirror this collection without it. "
+            "Skipping init sync and change stream.",
+            collection_name, metadata_retries,
+        )
+        return  # Do NOT proceed — Fabric will error without metadata
 
     try:
         init_table_schema(collection_name)
